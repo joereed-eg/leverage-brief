@@ -1,5 +1,5 @@
 {
-  "name": "Leverage Brief — Partial Capture (Zoho Handles Emails)",
+  "name": "Leverage Brief — Partial Capture + Drip Emails",
   "nodes": [
     {
       "parameters": {
@@ -21,15 +21,13 @@
     },
     {
       "parameters": {
-        "functionCode": "// Paste contents of n8n/nodes/05-partial-save.js\n// Generates UUID, dedup by email, stores in workflowStaticData,\n// outputs Zoho API body with resume_id + Resume_URL"
+        "functionCode": "// Paste contents of n8n/nodes/05-partial-save.js"
       },
       "id": "partial-save",
       "name": "01 — Partial Save + UUID",
       "type": "n8n-nodes-base.function",
       "position": [420, 300],
-      "typeVersion": 1,
-      "notesInFlow": true,
-      "notes": "Paste contents of n8n/nodes/05-partial-save.js"
+      "typeVersion": 1
     },
     {
       "parameters": {
@@ -39,9 +37,7 @@
       "name": "02 — Zoho Auth Refresh",
       "type": "n8n-nodes-base.function",
       "position": [640, 300],
-      "typeVersion": 1,
-      "notesInFlow": true,
-      "notes": "Paste contents of n8n/nodes/00-zoho-auth.js"
+      "typeVersion": 1
     },
     {
       "parameters": {
@@ -67,8 +63,71 @@
       "type": "n8n-nodes-base.httpRequest",
       "position": [860, 300],
       "typeVersion": 4,
-      "notesInFlow": true,
-      "notes": "Upserts lead with partial_status='in_progress', resume_id, Resume_URL.\nZoho Workflow Rules trigger resume nudge emails automatically.\nneverError=true so workflow continues on Zoho failure.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, resume_id: $('01 — Partial Save + UUID').first().json.resume_id }) }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "respond-partial",
+      "name": "Respond: Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [1080, 240],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('01 — Partial Save + UUID').first().json.trigger_drip.send_immediate }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-send-email1",
+      "name": "IF: New Record? Send Email 1",
+      "type": "n8n-nodes-base.if",
+      "position": [1080, 380],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "// Paste contents of n8n/emails/email1-immediate.js"
+      },
+      "id": "email1-build",
+      "name": "04 — Build Email 1 (Save Confirmation)",
+      "type": "n8n-nodes-base.function",
+      "position": [1300, 380],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.RESEND_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.resend_payload) }}",
+        "options": {
+          "timeout": 15000,
+          "response": { "response": { "neverError": true } }
+        }
+      },
+      "id": "resend-email1",
+      "name": "Resend: Email 1",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1520, 380],
+      "typeVersion": 4,
       "onError": "continueRegularOutput"
     },
     {
@@ -83,9 +142,9 @@
         }
       },
       "id": "if-zoho-401",
-      "name": "IF: Zoho 401 (Token Expired)?",
+      "name": "IF: Zoho 401?",
       "type": "n8n-nodes-base.if",
-      "position": [1080, 440],
+      "position": [1080, 520],
       "typeVersion": 1
     },
     {
@@ -95,29 +154,7 @@
       "id": "zoho-force-refresh",
       "name": "Force Token Refresh",
       "type": "n8n-nodes-base.function",
-      "position": [1300, 500],
-      "typeVersion": 1
-    },
-    {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ ok: true, resume_id: $('01 — Partial Save + UUID').first().json.resume_id }) }}",
-        "options": { "responseCode": 200 }
-      },
-      "id": "respond-partial",
-      "name": "Respond: Success",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "position": [1080, 300],
-      "typeVersion": 1
-    },
-    {
-      "parameters": {
-        "functionCode": "// Error handler — logs Zoho failures for ops visibility\nconst error = $input.first().json;\nconsole.log('Partial workflow error:', JSON.stringify(error));\nreturn [{ json: { error_logged: true, timestamp: new Date().toISOString() } }];"
-      },
-      "id": "error-logger",
-      "name": "Error Logger",
-      "type": "n8n-nodes-base.function",
-      "position": [1520, 500],
+      "position": [1300, 520],
       "typeVersion": 1
     },
     {
@@ -130,21 +167,117 @@
       "id": "webhook-get-partial",
       "name": "Webhook: Get Partial Data",
       "type": "n8n-nodes-base.webhook",
-      "position": [200, 640],
+      "position": [200, 700],
       "typeVersion": 2,
       "webhookId": "get-partial-data"
     },
     {
       "parameters": {
-        "functionCode": "// Paste contents of n8n/nodes/06-get-partial-data.js\n// Lookup by resume_id, return form_state + step"
+        "functionCode": "// Paste contents of n8n/nodes/06-get-partial-data.js"
       },
       "id": "get-partial-data",
-      "name": "04 — Get Partial Data",
+      "name": "05 — Get Partial Data",
       "type": "n8n-nodes-base.function",
-      "position": [420, 640],
-      "typeVersion": 1,
-      "notesInFlow": true,
-      "notes": "Paste contents of n8n/nodes/06-get-partial-data.js"
+      "position": [420, 700],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fulcrum-drip-stop",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-drip-stop",
+      "name": "Webhook: Drip Stop",
+      "type": "n8n-nodes-base.webhook",
+      "position": [200, 900],
+      "typeVersion": 2,
+      "webhookId": "fulcrum-drip-stop"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Paste contents of n8n/nodes/13-drip-stop-handler.js"
+      },
+      "id": "drip-stop-handler",
+      "name": "06 — Drip Stop Handler",
+      "type": "n8n-nodes-base.function",
+      "position": [420, 900],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "hours", "hoursInterval": 1 }] }
+      },
+      "id": "schedule-drip",
+      "name": "Schedule: Drip Check (1h)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [200, 1100],
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": {
+        "functionCode": "// Paste contents of n8n/nodes/00-zoho-auth.js"
+      },
+      "id": "zoho-auth-drip",
+      "name": "07 — Zoho Auth (Drip)",
+      "type": "n8n-nodes-base.function",
+      "position": [420, 1100],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "// Paste contents of n8n/nodes/07-drip-check-and-send.js"
+      },
+      "id": "drip-check",
+      "name": "08 — Drip Check + Build Emails",
+      "type": "n8n-nodes-base.function",
+      "position": [640, 1100],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.no_emails }}",
+              "operation": "notEqual",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-drip-emails",
+      "name": "IF: Drip Emails to Send?",
+      "type": "n8n-nodes-base.if",
+      "position": [860, 1100],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.RESEND_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.resend_payload) }}",
+        "options": {
+          "timeout": 15000,
+          "response": { "response": { "neverError": true } }
+        }
+      },
+      "id": "resend-drip",
+      "name": "Resend: Drip Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1080, 1100],
+      "typeVersion": 4,
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -167,24 +300,57 @@
       "main": [
         [
           { "node": "Respond: Success", "type": "main", "index": 0 },
-          { "node": "IF: Zoho 401 (Token Expired)?", "type": "main", "index": 0 }
+          { "node": "IF: New Record? Send Email 1", "type": "main", "index": 0 },
+          { "node": "IF: Zoho 401?", "type": "main", "index": 0 }
         ]
       ]
     },
-    "IF: Zoho 401 (Token Expired)?": {
+    "IF: New Record? Send Email 1": {
+      "main": [
+        [{ "node": "04 — Build Email 1 (Save Confirmation)", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "04 — Build Email 1 (Save Confirmation)": {
+      "main": [
+        [{ "node": "Resend: Email 1", "type": "main", "index": 0 }]
+      ]
+    },
+    "IF: Zoho 401?": {
       "main": [
         [{ "node": "Force Token Refresh", "type": "main", "index": 0 }],
         []
       ]
     },
-    "Force Token Refresh": {
-      "main": [
-        [{ "node": "Error Logger", "type": "main", "index": 0 }]
-      ]
-    },
     "Webhook: Get Partial Data": {
       "main": [
-        [{ "node": "04 — Get Partial Data", "type": "main", "index": 0 }]
+        [{ "node": "05 — Get Partial Data", "type": "main", "index": 0 }]
+      ]
+    },
+    "Webhook: Drip Stop": {
+      "main": [
+        [{ "node": "06 — Drip Stop Handler", "type": "main", "index": 0 }]
+      ]
+    },
+    "Schedule: Drip Check (1h)": {
+      "main": [
+        [{ "node": "07 — Zoho Auth (Drip)", "type": "main", "index": 0 }]
+      ]
+    },
+    "07 — Zoho Auth (Drip)": {
+      "main": [
+        [{ "node": "08 — Drip Check + Build Emails", "type": "main", "index": 0 }]
+      ]
+    },
+    "08 — Drip Check + Build Emails": {
+      "main": [
+        [{ "node": "IF: Drip Emails to Send?", "type": "main", "index": 0 }]
+      ]
+    },
+    "IF: Drip Emails to Send?": {
+      "main": [
+        [{ "node": "Resend: Drip Email", "type": "main", "index": 0 }],
+        []
       ]
     }
   },
@@ -195,6 +361,7 @@
   "staticData": {
     "global": {
       "partial_records": {},
+      "stopped_emails": {},
       "zoho_access_token": null,
       "zoho_token_expiry": 0
     }
@@ -202,6 +369,7 @@
   "tags": [
     { "name": "leverage-brief" },
     { "name": "partial-capture" },
+    { "name": "drip-emails" },
     { "name": "production" }
   ]
 }

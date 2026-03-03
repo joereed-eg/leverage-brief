@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Leverage Brief",
+  title: "Fulcrum Leverage Brief",
   description: "Get your Leverage Brief — a proprietary diagnostic for your company.",
 };
 

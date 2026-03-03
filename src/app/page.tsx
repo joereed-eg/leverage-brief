@@ -74,8 +74,17 @@ export default function Home() {
           </div>
         )}
 
+        {/* Fulcrum Logo */}
+        <div className="mb-8">
+          <img
+            src="/fulcrum-logo.png"
+            alt="Fulcrum Collective"
+            className="h-10 sm:h-12 mx-auto"
+          />
+        </div>
+
         <h1 className="text-4xl sm:text-5xl font-bold mb-4 leading-tight">
-          Leverage Brief
+          Fulcrum Leverage Brief
         </h1>
         <p className="text-lg mb-8 text-black/60">
           A proprietary strategic diagnostic for your company.

@@ -1,21 +1,25 @@
 /**
- * n8n Function Node: Prospect Email (Mirrored Sunday Dread)
+ * n8n Function Node: Prospect Email — Leverage Brief Delivery (via Resend)
  *
- * Builds the prospect-facing email with:
+ * Builds the prospect-facing email that delivers the Leverage Brief PDF.
+ * Uses "mirrored" language from the lead's Sunday Dread response.
+ *
+ * Structure:
  *   - Subject mirroring company name
- *   - Body that explicitly mirrors Sunday Dread pain domain
+ *   - Body that mirrors Sunday Dread pain domain
  *   - 3-bullet structure: Strategic insight → Mirrored pain → One action
- *   - Fulcrum support section
  *   - Single Cyan CTA: "Book a Fulcrum Strategy Session →"
- *   - PDF attached (passed as base64 from prior PDF generation node)
+ *   - PDF attached via Resend attachments
+ *   - HMAC-signed unsubscribe link
  *
  * Input:  Full pipeline payload + pdf_base64 from PDF generation
- * Output: Postmark email payload with attachment
+ * Output: Resend email payload with attachment
  */
 
+const crypto = require('crypto');
+
 const data = $input.first().json;
-const name = data.name || '';
-const firstName = name.split(' ')[0] || 'there';
+const firstName = data.first_name || (data.name || '').split(' ')[0] || 'there';
 const companyName = data.company_name || 'your company';
 const email = data.email || '';
 const sundayDread = data.sunday_dread || '';
@@ -24,12 +28,15 @@ const monthlyFocus = data.monthly_focus || '';
 const gatekeeperPath = data.gatekeeper_path || 'LITE';
 const industry = data.enrichment?.industry || '';
 
+const FROM_EMAIL = $env.RESEND_FROM_EMAIL || 'joe@fulcrumcollective.io';
+const APP_URL = $env.APP_URL || 'https://leverage.fulcrumcollective.io';
+const HMAC_SECRET = $env.HMAC_SECRET || 'fulcrum-dev-secret';
+
 // --- Mirror Analysis: Extract Pain Domain from Sunday Dread ---
 const dreadLevel = parseInt(sundayDread.charAt(0)) || 3;
 let painDomain = 'operational challenges';
 let mirrorPhrase = '';
 
-const dreadLower = sundayDread.toLowerCase();
 if (dreadLevel >= 4) {
   mirrorPhrase = `We know the weight of what you're carrying — you rated your weekly dread at a ${dreadLevel} out of 5.`;
 } else if (dreadLevel >= 3) {
@@ -61,15 +68,27 @@ const bullet3 = monthlyFocus
   ? `Your #1 focus this month — <em>${monthlyFocus.substring(0, 100)}</em> — is woven into your recommended actions so everything compounds.`
   : `Each action in your brief follows the Atomic Monday Rule: something you can start at 9 AM with a clear deliverable by lunch.`;
 
-const bookingUrl = 'https://fulcrum.com/book-strategy-session';
+const bookingUrl = 'https://cal.com/fulcrumcollective/discovery-call';
+
+// --- Unsubscribe link ---
+const unsubToken = crypto
+  .createHmac('sha256', HMAC_SECRET)
+  .update(email.toLowerCase())
+  .digest('hex')
+  .substring(0, 16);
+const unsubUrl = `${APP_URL}/api/drip/stop?email=${encodeURIComponent(email)}&token=${unsubToken}`;
 
 // --- HTML Email ---
-const HtmlBody = `
-<!DOCTYPE html>
+const html = `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
-<body style="font-family: 'Satoshi', Arial, Helvetica, sans-serif; background: #F7F5F2; color: #000000; padding: 40px 20px; margin: 0;">
+<body style="font-family: Arial, Helvetica, sans-serif; background: #F7F5F2; color: #000000; padding: 40px 20px; margin: 0;">
   <div style="max-width: 580px; margin: 0 auto; background: #F7F5F2;">
+
+    <!-- Logo -->
+    <div style="margin-bottom: 24px;">
+      <a href="https://www.fulcrumcollective.io"><img src="https://fulcrumcollective.io/wp-content/uploads/2026/03/Fulcrum-Logo.png" alt="Fulcrum Collective" width="150" style="width: 150px; height: auto; display: block;" /></a>
+    </div>
 
     <!-- Header -->
     <div style="border-bottom: 3px solid #27E7FE; padding-bottom: 16px; margin-bottom: 28px;">
@@ -117,51 +136,34 @@ const HtmlBody = `
     <div style="margin-top: 32px; padding-top: 16px; border-top: 1px solid #e0ddd8;">
       <p style="font-size: 11px; color: #aaa; margin: 0;">
         Fulcrum Collective &middot;
-        <a href="#" style="color: #aaa;">Unsubscribe</a> &middot;
-        <a href="#" style="color: #aaa;">Privacy Policy</a>
+        <a href="${unsubUrl}" style="color: #aaa;">Unsubscribe</a>
       </p>
     </div>
 
   </div>
 </body>
-</html>`.trim();
+</html>`;
 
-// --- Plain Text Fallback ---
-const TextBody = `Your Leverage Brief is Ready
-Strategic Assessment for ${companyName}
-
-${firstName},
-
-Your personalized Leverage Brief is attached. Here's what it reveals:
-
-1. ${biggestBet ? `Your biggest strategic bet — ${biggestBet.substring(0, 120)} — is a high-leverage move.` : `Your brief identifies the single highest-leverage priority for ${companyName}.`}
-
-2. ${mirrorPhrase} Your brief addresses ${painDomain} head-on.
-
-3. ${monthlyFocus ? `Your #1 focus this month — ${monthlyFocus.substring(0, 100)} — is woven into your actions.` : `Each action follows the Atomic Monday Rule: startable at 9 AM with a clear deliverable.`}
-
-Book a Fulcrum Strategy Session: ${bookingUrl}
-
----
-Questions? Reply to this email.
-Fulcrum Collective`;
-
-// --- Build Postmark payload with PDF attachment ---
+// --- Build Resend payload with PDF attachment ---
 const pdfBase64 = data.pdf_base64 || '';
 const attachments = pdfBase64 ? [{
-  Name: `Leverage-Brief-${companyName.replace(/[^a-zA-Z0-9]/g, '-')}.pdf`,
-  Content: pdfBase64,
-  ContentType: 'application/pdf',
+  filename: `Leverage-Brief-${companyName.replace(/[^a-zA-Z0-9]/g, '-')}.pdf`,
+  content: pdfBase64,
 }] : [];
+
+const resendPayload = {
+  from: FROM_EMAIL,
+  to: email,
+  reply_to: 'joe@fulcrumcollective.io',
+  subject: `Your Leverage Brief: ${companyName} Roadmap`,
+  html,
+  attachments,
+};
 
 return [{
   json: {
-    From: 'team@fulcrum.com',
-    To: email,
-    Subject: `Your Leverage Brief: ${companyName} Roadmap`,
-    HtmlBody,
-    TextBody,
-    Attachments: attachments,
-    MessageStream: 'outbound',
+    resend_payload: resendPayload,
+    // Pass through for downstream nodes
+    ...data,
   }
 }];

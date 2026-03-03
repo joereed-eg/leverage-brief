@@ -3,15 +3,16 @@
  *
  * Receives partial payload from /fulcrum-assess-partial webhook.
  * Generates UUID resume_id, stores in workflowStaticData,
- * and prepares Zoho upsert + Postmark resume email payloads.
+ * and prepares Zoho upsert + Resend resume email payloads.
  *
  * Features:
  *   - UUID v4 generation with collision check
  *   - Dedup by email (updates existing record, preserves resume_id)
  *   - Stores form_state as stringified JSON for Zoho Partial_Data_Blob
- *   - Outputs structured Zoho API body + Postmark trigger flags
+ *   - Accepts first_name/last_name separately (form sends these)
+ *   - Falls back to splitting `name` if needed
  *
- * Input:  Partial payload with email, name, company_name, form_state, partial_progress_step
+ * Input:  Partial payload with email, first_name, last_name, company_name, form_state, partial_progress_step
  * Output: Payload with resume_id, Zoho API body, and email trigger data
  */
 
@@ -30,15 +31,27 @@ function uuidv4(existingKeys) {
   return id;
 }
 
-const email = $input.first().json.email || '';
-const name = $input.first().json.name || '';
-const companyName = $input.first().json.company_name || '';
-const companyUrl = $input.first().json.company_url || '';
-const partialStep = $input.first().json.partial_progress_step || 1;
-const formState = $input.first().json.form_state || {};
-const referrerUrl = $input.first().json.referrer_url || '';
-const browserMetadata = $input.first().json.browser_metadata || {};
-const clientIp = $input.first().json.client_ip || '';
+const input = $input.first().json;
+const email = input.email || '';
+const companyName = input.company_name || '';
+const companyUrl = input.company_url || '';
+const partialStep = input.partial_progress_step || 1;
+const formState = input.form_state || {};
+const referrerUrl = input.referrer_url || '';
+const browserMetadata = input.browser_metadata || {};
+const clientIp = input.client_ip || '';
+
+// Name handling — form now sends first_name/last_name separately
+let firstName = input.first_name || '';
+let lastName = input.last_name || '';
+
+// Fallback: split `name` if first/last not provided
+if (!firstName && input.name) {
+  const parts = input.name.split(' ');
+  firstName = parts[0] || '';
+  lastName = parts.slice(1).join(' ') || '';
+}
+if (!lastName) lastName = firstName;
 
 // Validate email
 if (!email || !email.includes('@')) {
@@ -71,7 +84,8 @@ if (existingEntry) {
   resumeId = existingEntry[0];
   staticData.partial_records[resumeId] = {
     ...staticData.partial_records[resumeId],
-    name,
+    first_name: firstName,
+    last_name: lastName,
     company_name: companyName,
     company_url: companyUrl,
     form_state: formState,
@@ -84,7 +98,8 @@ if (existingEntry) {
   resumeId = uuidv4(existingKeys);
   staticData.partial_records[resumeId] = {
     email,
-    name,
+    first_name: firstName,
+    last_name: lastName,
     company_name: companyName,
     company_url: companyUrl,
     form_state: formState,
@@ -100,15 +115,8 @@ if (existingEntry) {
   };
 }
 
-const baseUrl = referrerUrl
-  ? (() => { try { return new URL(referrerUrl).origin; } catch { return 'https://fulcrum.com'; } })()
-  : 'https://fulcrum.com';
-const resumeUrl = `${baseUrl}/diagnostic?resume_id=${resumeId}`;
-
-// --- Name parsing ---
-const nameParts = name.split(' ');
-const firstName = nameParts[0] || '';
-const lastName = nameParts.slice(1).join(' ') || firstName;
+const APP_URL = $env.APP_URL || 'https://leverage.fulcrumcollective.io';
+const resumeUrl = `${APP_URL}?resume_id=${resumeId}`;
 
 // --- Zoho CRM API body (for HTTP Request node) ---
 const zohoApiBody = {
@@ -136,8 +144,8 @@ return [{
     resume_id: resumeId,
     resume_url: resumeUrl,
     email,
-    name,
     first_name: firstName,
+    last_name: lastName,
     company_name: companyName,
     company_url: companyUrl,
     partial_progress_step: partialStep,
@@ -149,10 +157,10 @@ return [{
     // Zoho API payload
     zoho_api_body: zohoApiBody,
 
-    // Drip control
+    // Drip control — only send immediate email for new records
     trigger_drip: {
       send_immediate: isNewRecord,
-      email_1_subject: `Your Fulcrum Assessment is saved, ${firstName || name}`,
+      email_1_subject: `Your Fulcrum Assessment is saved, ${firstName || 'there'}`,
     },
   }
 }];

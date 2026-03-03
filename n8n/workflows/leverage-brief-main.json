@@ -61,7 +61,7 @@
       "position": [1080, 200],
       "typeVersion": 1,
       "notesInFlow": true,
-      "notes": "PREMIUM path only. 60s timeout. Sets research_failed=true on failure."
+      "notes": "PREMIUM path only. 60s timeout."
     },
     {
       "parameters": {
@@ -117,7 +117,7 @@
     },
     {
       "parameters": {
-        "functionCode": "// Paste contents of n8n/nodes/05b-store-pdf.js\n// Stores PDF in Vercel Blob, returns pdf_download_url"
+        "functionCode": "// Paste contents of n8n/nodes/05b-store-pdf.js"
       },
       "id": "pdf-store",
       "name": "05b — Store PDF + Get URL",
@@ -125,7 +125,21 @@
       "position": [1960, 300],
       "typeVersion": 1,
       "notesInFlow": true,
-      "notes": "Stores PDF in Vercel Blob. Returns pdf_download_url for Zoho."
+      "notes": "Stores PDF in Vercel Blob. Returns pdf_download_url."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": true }",
+        "options": {}
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [1960, 520],
+      "typeVersion": 1,
+      "notesInFlow": true,
+      "notes": "Respond immediately so frontend isn't waiting."
     },
     {
       "parameters": {
@@ -145,9 +159,7 @@
       "name": "06b — Build Zoho Payload",
       "type": "n8n-nodes-base.function",
       "position": [2400, 300],
-      "typeVersion": 1,
-      "notesInFlow": true,
-      "notes": "Maps all data to Zoho Lead fields including PDF_Download_URL, Resume_URL."
+      "typeVersion": 1
     },
     {
       "parameters": {
@@ -173,13 +185,11 @@
       "type": "n8n-nodes-base.httpRequest",
       "position": [2620, 300],
       "typeVersion": 4,
-      "notesInFlow": true,
-      "notes": "Upserts Lead with all custom fields. Zoho Workflow Rules trigger emails automatically.",
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "functionCode": "// Paste contents of n8n/nodes/04-completion-branching.js\n// Marks partial records as completed, prepares state transition"
+        "functionCode": "// Paste contents of n8n/nodes/04-completion-branching.js"
       },
       "id": "completion-branching",
       "name": "07 — Completion Branching",
@@ -187,46 +197,80 @@
       "position": [2840, 300],
       "typeVersion": 1,
       "notesInFlow": true,
-      "notes": "State machine: marks prior partial as completed. Zoho handles nurture enrollment via Cadences."
+      "notes": "State machine: marks partial as completed, stores nurture state."
     },
     {
       "parameters": {
-        "functionCode": "// Paste contents of n8n/nodes/09-admin-godview.js\n// Admin notification — internal only, still sends via Postmark/SMTP"
+        "functionCode": "// Paste contents of n8n/nodes/08-prospect-email.js"
       },
-      "id": "admin-godview",
-      "name": "08 — Admin God-View Email",
+      "id": "prospect-email",
+      "name": "08 — Prospect Email (PDF Delivery)",
       "type": "n8n-nodes-base.function",
-      "position": [3060, 200],
+      "position": [3060, 140],
       "typeVersion": 1,
       "notesInFlow": true,
-      "notes": "Internal admin notification. Still uses Postmark — this is NOT a lead-facing email."
+      "notes": "Builds Resend payload with PDF attachment for the lead."
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.postmarkapp.com/email",
+        "url": "https://api.resend.com/emails",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "X-Postmark-Server-Token", "value": "={{ $env.POSTMARK_API_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.RESEND_API_KEY }}" },
             { "name": "Content-Type", "value": "application/json" }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ From: $json.From, To: $json.To, Subject: $json.Subject, HtmlBody: $json.HtmlBody, TextBody: $json.TextBody, Attachments: $json.Attachments || [], MessageStream: 'outbound' }) }}",
+        "jsonBody": "={{ JSON.stringify($json.resend_payload) }}",
         "options": {
           "timeout": 15000,
           "response": { "response": { "neverError": true } }
         }
       },
-      "id": "postmark-admin",
-      "name": "Postmark: Admin Email",
+      "id": "resend-prospect",
+      "name": "Resend: Prospect Email",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [3280, 200],
+      "position": [3280, 140],
       "typeVersion": 4,
-      "notesInFlow": true,
-      "notes": "Admin-only email via Postmark. Lead-facing emails handled by Zoho.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Paste contents of n8n/nodes/09-admin-godview.js"
+      },
+      "id": "admin-godview",
+      "name": "09 — Admin God-View Email",
+      "type": "n8n-nodes-base.function",
+      "position": [3060, 300],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.RESEND_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.resend_payload) }}",
+        "options": {
+          "timeout": 15000,
+          "response": { "response": { "neverError": true } }
+        }
+      },
+      "id": "resend-admin",
+      "name": "Resend: Admin Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [3280, 300],
+      "typeVersion": 4,
       "onError": "continueRegularOutput"
     },
     {
@@ -244,7 +288,7 @@
       "id": "if-high-gap",
       "name": "IF: High Gap Score > 7?",
       "type": "n8n-nodes-base.if",
-      "position": [3060, 420],
+      "position": [3500, 300],
       "typeVersion": 1
     },
     {
@@ -252,34 +296,122 @@
         "functionCode": "// Paste contents of n8n/nodes/10-high-gap-alert.js"
       },
       "id": "slack-alert",
-      "name": "09 — Slack High-Gap Alert",
+      "name": "10 — Slack High-Gap Alert",
       "type": "n8n-nodes-base.function",
-      "position": [3280, 420],
+      "position": [3720, 300],
       "typeVersion": 1
     },
     {
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={ \"ok\": true }",
-        "options": {}
+        "functionCode": "// Paste contents of n8n/emails/implementation-nurture.js\n// Sends nurture email 0 (day 0 recap) immediately"
       },
-      "id": "respond-webhook",
-      "name": "Respond to Webhook",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "position": [1960, 500],
+      "id": "nurture-email-0",
+      "name": "11 — Nurture Email 0 (Immediate)",
+      "type": "n8n-nodes-base.function",
+      "position": [3060, 460],
       "typeVersion": 1,
       "notesInFlow": true,
-      "notes": "Respond immediately after PDF store trigger so frontend isn't waiting."
+      "notes": "Implementation nurture email 0 — sent immediately after completion."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.RESEND_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.resend_payload) }}",
+        "options": {
+          "timeout": 15000,
+          "response": { "response": { "neverError": true } }
+        }
+      },
+      "id": "resend-nurture-0",
+      "name": "Resend: Nurture Email 0",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [3280, 460],
+      "typeVersion": 4,
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
         "functionCode": "// Log final pipeline result\nconst data = $input.first().json;\nconsole.log(`Pipeline complete: ${data.email} | Gap: ${data.strategic_gap_score} | Path: ${data.gatekeeper_path}`);\nreturn [{ json: { pipeline_complete: true, timestamp: new Date().toISOString() } }];"
       },
       "id": "pipeline-log",
-      "name": "10 — Pipeline Complete Log",
+      "name": "12 — Pipeline Complete Log",
       "type": "n8n-nodes-base.function",
-      "position": [3280, 300],
+      "position": [3500, 460],
       "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "hours", "hoursInterval": 6 }] }
+      },
+      "id": "schedule-nurture",
+      "name": "Schedule: Nurture Check (6h)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [200, 700],
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": {
+        "functionCode": "// Paste contents of n8n/nodes/12-nurture-check-and-send.js"
+      },
+      "id": "nurture-check",
+      "name": "Nurture Check + Build Emails",
+      "type": "n8n-nodes-base.function",
+      "position": [420, 700],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.no_emails }}",
+              "operation": "notEqual",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-nurture-emails",
+      "name": "IF: Nurture Emails to Send?",
+      "type": "n8n-nodes-base.if",
+      "position": [640, 700],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.RESEND_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.resend_payload) }}",
+        "options": {
+          "timeout": 15000,
+          "response": { "response": { "neverError": true } }
+        }
+      },
+      "id": "resend-nurture-scheduled",
+      "name": "Resend: Scheduled Nurture",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [860, 700],
+      "typeVersion": 4,
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -355,20 +487,56 @@
     "07 — Completion Branching": {
       "main": [
         [
-          { "node": "08 — Admin God-View Email", "type": "main", "index": 0 },
-          { "node": "IF: High Gap Score > 7?", "type": "main", "index": 0 },
-          { "node": "10 — Pipeline Complete Log", "type": "main", "index": 0 }
+          { "node": "08 — Prospect Email (PDF Delivery)", "type": "main", "index": 0 },
+          { "node": "09 — Admin God-View Email", "type": "main", "index": 0 },
+          { "node": "11 — Nurture Email 0 (Immediate)", "type": "main", "index": 0 }
         ]
       ]
     },
-    "08 — Admin God-View Email": {
+    "08 — Prospect Email (PDF Delivery)": {
       "main": [
-        [{ "node": "Postmark: Admin Email", "type": "main", "index": 0 }]
+        [{ "node": "Resend: Prospect Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "09 — Admin God-View Email": {
+      "main": [
+        [{ "node": "Resend: Admin Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "Resend: Admin Email": {
+      "main": [
+        [{ "node": "IF: High Gap Score > 7?", "type": "main", "index": 0 }]
       ]
     },
     "IF: High Gap Score > 7?": {
       "main": [
-        [{ "node": "09 — Slack High-Gap Alert", "type": "main", "index": 0 }],
+        [{ "node": "10 — Slack High-Gap Alert", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "11 — Nurture Email 0 (Immediate)": {
+      "main": [
+        [{ "node": "Resend: Nurture Email 0", "type": "main", "index": 0 }]
+      ]
+    },
+    "Resend: Nurture Email 0": {
+      "main": [
+        [{ "node": "12 — Pipeline Complete Log", "type": "main", "index": 0 }]
+      ]
+    },
+    "Schedule: Nurture Check (6h)": {
+      "main": [
+        [{ "node": "Nurture Check + Build Emails", "type": "main", "index": 0 }]
+      ]
+    },
+    "Nurture Check + Build Emails": {
+      "main": [
+        [{ "node": "IF: Nurture Emails to Send?", "type": "main", "index": 0 }]
+      ]
+    },
+    "IF: Nurture Emails to Send?": {
+      "main": [
+        [{ "node": "Resend: Scheduled Nurture", "type": "main", "index": 0 }],
         []
       ]
     }
@@ -376,7 +544,12 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "staticData": null,
+  "staticData": {
+    "global": {
+      "nurture_leads": {},
+      "stopped_emails": {}
+    }
+  },
   "tags": [
     { "name": "leverage-brief" },
     { "name": "production" }

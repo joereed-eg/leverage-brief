@@ -2,15 +2,15 @@
  * n8n Function Node: Completion Branching
  *
  * Runs AFTER full-submit Zoho upsert in the main pipeline.
- * Handles the state machine transition and campaign enrollment:
+ * Handles the state machine transition:
  *
  * 1. Checks if this lead had a prior partial record (by email)
- * 2. If yes: marks partial as 'completed', prepares resume nurture suppression
+ * 2. If yes: marks partial as 'completed'
  * 3. Determines Implementation Nurture track (PREMIUM vs LITE)
- * 4. Builds Zoho API payloads for:
- *    - Tag update (add Fulcrum_Completed_Assessm, remove Fulcrum_Partial_Submissio)
- *    - partial_status update to 'completed'
- *    - Campaign enrollment
+ * 4. Stores nurture lead data in static data for scheduled nurture emailer
+ * 5. Builds Zoho API payloads for tag updates
+ *
+ * All emails sent via Resend — no Zoho Cadences used.
  *
  * Input:  Full submit payload with email, gatekeeper_path, zoho_access_token
  * Output: Payload + branching decisions + Zoho API bodies for downstream HTTP nodes
@@ -18,6 +18,7 @@
 
 const data = $input.first().json;
 const email = data.email || '';
+const firstName = data.first_name || '';
 const gatekeeperPath = data.gatekeeper_path || 'LITE';
 const strategicGapScore = data.strategic_gap_score || 0;
 const strategicPath = data.strategic_path || 'CLARIFY';
@@ -50,13 +51,33 @@ if (existingPartial) {
 
 // --- Determine Implementation Nurture track ---
 const isPremium = gatekeeperPath === 'PREMIUM';
-const nurtureTrack = isPremium
-  ? 'Fulcrum Implementation Nurture — PREMIUM'
-  : 'Fulcrum Implementation Nurture — LITE';
+const nurtureTrack = isPremium ? 'PREMIUM' : 'LITE';
 
 const nurtureConfig = isPremium
-  ? { email_count: 5, cadence_days: [0, 3, 5, 7, 10], cadence_label: '3-7 day' }
-  : { email_count: 3, cadence_days: [0, 5, 7], cadence_label: '5-7 day' };
+  ? { email_count: 5, cadence_days: [0, 3, 5, 7, 10] }
+  : { email_count: 3, cadence_days: [0, 5, 7] };
+
+// --- Store nurture state for the scheduled nurture emailer ---
+if (!staticData.nurture_leads) staticData.nurture_leads = {};
+staticData.nurture_leads[email] = {
+  email,
+  first_name: firstName,
+  last_name: data.last_name || '',
+  company_name: data.company_name || '',
+  gatekeeper_path: gatekeeperPath,
+  strategic_gap_score: strategicGapScore,
+  strategic_path: strategicPath,
+  biggest_strategic_bet: data.biggest_strategic_bet || '',
+  sunday_dread: data.sunday_dread || '',
+  fulcrum_priorities: data.fulcrum_priorities || '',
+  monthly_focus: data.monthly_focus || '',
+  engagement_readiness: data.engagement_readiness || '',
+  completed_at: new Date().toISOString(),
+  nurture_emails_sent: 0,
+  nurture_track: nurtureTrack,
+  cadence_days: nurtureConfig.cadence_days,
+  nurture_status: 'active',
+};
 
 // --- Zoho: Update lead with completion data ---
 const zohoCompletionUpdate = {
@@ -76,23 +97,8 @@ const zohoCompletionUpdate = {
 };
 
 // --- Zoho: Remove Fulcrum_Partial_Submissio tag (if had partial) ---
-// Note: Zoho tag removal requires a separate API call
 const zohoTagRemoval = hadPartialRecord ? {
   tags: [{ name: 'Fulcrum_Partial_Submissio' }],
-} : null;
-
-// --- Zoho: Campaign enrollment ---
-// Campaign names must match what's configured in Zoho Campaigns
-const zohoCampaignEnrollment = {
-  campaign_name: nurtureTrack,
-  lead_email: email,
-};
-
-// Suppress from Resume Nurture if previously enrolled
-const zohoResumeSuppression = hadPartialRecord ? {
-  campaign_name: 'Fulcrum Resume Nurture',
-  lead_email: email,
-  action: 'remove',
 } : null;
 
 return [{
@@ -109,18 +115,15 @@ return [{
         update_partial_status: hadPartialRecord,
         apply_completed_tag: true,
         remove_partial_tag: hadPartialRecord,
-        suppress_resume_nurture: hadPartialRecord,
-        enroll_implementation_nurture: true,
+        start_nurture: true,
       },
     },
 
     // Zoho API bodies for downstream HTTP Request nodes
     zoho_completion_update: zohoCompletionUpdate,
     zoho_tag_removal: zohoTagRemoval,
-    zoho_campaign_enrollment: zohoCampaignEnrollment,
-    zoho_resume_suppression: zohoResumeSuppression,
 
-    // For Implementation Nurture email builder
+    // For Implementation Nurture — email 0 sent immediately
     _nurture_email_index: 0,
   }
 }];

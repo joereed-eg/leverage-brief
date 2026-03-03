@@ -1,15 +1,18 @@
 /**
- * n8n Function Node: Admin God-View Email
+ * n8n Function Node: Admin God-View Email (via Resend)
  *
- * Multi-part MIME (HTML + plain text) with PDF attachment.
- * Contains full Lead DNA, strategic hooks, scores, and Zoho link.
+ * Internal admin notification with full Lead DNA, strategic hooks,
+ * scores, engagement readiness, and Zoho deep link.
+ * PDF attached via Resend attachments.
  *
  * Input:  Full pipeline payload + pdf_base64
- * Output: Postmark email payload (admin notification)
+ * Output: Resend email payload (admin notification)
  */
 
 const data = $input.first().json;
-const name = data.name || 'Unknown';
+const firstName = data.first_name || '';
+const lastName = data.last_name || '';
+const name = [firstName, lastName].filter(Boolean).join(' ') || data.name || 'Unknown';
 const email = data.email || '';
 const companyName = data.company_name || 'Unknown';
 const companyUrl = data.company_url || '';
@@ -22,34 +25,49 @@ const biggestBet = data.biggest_strategic_bet || 'Not provided';
 const strategicGapScore = data.strategic_gap_score || 0;
 const gatekeeperPath = data.gatekeeper_path || 'LITE';
 const strategicPath = data.strategic_path || 'CLARIFY';
+const engagementReadiness = data.engagement_readiness || '';
+
+const FROM_EMAIL = $env.RESEND_FROM_EMAIL || 'joe@fulcrumcollective.io';
+const ADMIN_EMAIL = 'joe@fulcrumcollective.io';
 
 const revenueFormatted = annualRevenue
   ? `$${Number(annualRevenue).toLocaleString()}`
   : 'Not available';
 
-// Zoho deep link (placeholder — update with actual Zoho org URL)
+// Zoho deep link
 const zohoDeepLink = `https://crm.zoho.com/crm/org/tab/Leads?searchText=${encodeURIComponent(email)}`;
 
-const adminEmail = process.env?.ADMIN_EMAIL || 'admin@exponentgroup.com';
+// Engagement readiness mapping
+const readinessMap = {
+  now: { label: 'HOT — Needs guidance now', color: '#dc3545' },
+  '30_days': { label: 'WARM — Within 30 days', color: '#fd7e14' },
+  next_quarter: { label: 'COOL — Next quarter', color: '#0dcaf0' },
+  just_looking: { label: 'COLD — Just curious', color: '#6c757d' },
+};
+const readiness = readinessMap[engagementReadiness] || { label: 'Not specified', color: '#6c757d' };
 
 const gapColor = strategicGapScore > 7 ? '#e74c3c' : strategicGapScore > 4 ? '#f39c12' : '#27ae60';
 
 // --- HTML Email ---
-const HtmlBody = `
-<!DOCTYPE html>
+const html = `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
-<body style="font-family: 'Satoshi', Arial, Helvetica, sans-serif; background: #f8f8f8; color: #000; padding: 20px; margin: 0;">
+<body style="font-family: Arial, Helvetica, sans-serif; background: #f8f8f8; color: #000; padding: 20px; margin: 0;">
   <div style="max-width: 640px; margin: 0 auto; background: #fff; border-radius: 8px; border: 1px solid #e0e0e0; overflow: hidden;">
 
     <!-- Header Bar -->
     <div style="background: #000; color: #fff; padding: 16px 24px;">
       <h1 style="margin: 0; font-size: 18px; font-weight: 700;">
-        &#128680; NEW HIGH-VALUE LEAD: ${companyName}
+        NEW HIGH-VALUE LEAD: ${companyName}
       </h1>
     </div>
 
     <div style="padding: 24px;">
+
+      <!-- Readiness Badge -->
+      <div style="margin-bottom: 16px;">
+        <span style="display: inline-block; background: ${readiness.color}; color: #fff; font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 4px;">${readiness.label}</span>
+      </div>
 
       <!-- Lead DNA -->
       <h2 style="font-size: 14px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 12px; border-bottom: 1px solid #eee; padding-bottom: 8px;">Lead DNA</h2>
@@ -62,6 +80,7 @@ const HtmlBody = `
         <tr><td style="padding: 4px 8px; color: #666;">Headcount</td><td style="padding: 4px 8px;">${headcount}</td></tr>
         <tr><td style="padding: 4px 8px; color: #666;">ARR</td><td style="padding: 4px 8px;">${revenueFormatted}</td></tr>
         <tr><td style="padding: 4px 8px; color: #666;">Industry</td><td style="padding: 4px 8px;">${industry}</td></tr>
+        <tr><td style="padding: 4px 8px; color: #666;">Readiness</td><td style="padding: 4px 8px; font-weight: 600;">${readiness.label}</td></tr>
       </table>
 
       <!-- Strategic Hook -->
@@ -104,56 +123,33 @@ const HtmlBody = `
     </div>
   </div>
 </body>
-</html>`.trim();
-
-// --- Plain Text ---
-const TextBody = `NEW HIGH-VALUE LEAD: ${companyName}
-
-LEAD DNA
-Name: ${name}
-Email: ${email}
-Company: ${companyName}
-Website: ${companyUrl}
-LinkedIn: ${linkedinUrl}
-Headcount: ${headcount}
-ARR: ${revenueFormatted}
-Industry: ${industry}
-
-STRATEGIC HOOK
-Sunday Dread: ${sundayDread}
-Biggest Strategic Bet: ${biggestBet}
-
-SCORES & PATH
-Strategic Gap Score: ${strategicGapScore}/10
-Gatekeeper Path: ${gatekeeperPath}
-Strategic Path: ${strategicPath}
-
-Zoho CRM: ${zohoDeepLink}
-
-PDF attached.`;
+</html>`;
 
 // --- Attachment ---
 const pdfBase64 = data.pdf_base64 || '';
 const attachments = pdfBase64 ? [{
-  Name: `Leverage-Brief-${companyName.replace(/[^a-zA-Z0-9]/g, '-')}.pdf`,
-  Content: pdfBase64,
-  ContentType: 'application/pdf',
+  filename: `Leverage-Brief-${companyName.replace(/[^a-zA-Z0-9]/g, '-')}.pdf`,
+  content: pdfBase64,
 }] : [];
+
+const resendPayload = {
+  from: FROM_EMAIL,
+  to: ADMIN_EMAIL,
+  reply_to: FROM_EMAIL,
+  subject: `[${readiness.label.split(' — ')[0]}] New Leverage Brief: ${name} — ${companyName}`,
+  html,
+  attachments,
+};
 
 return [{
   json: {
-    From: 'system@fulcrum.com',
-    To: adminEmail,
-    Subject: `\u{1F6A8} NEW HIGH-VALUE LEAD: ${companyName}`,
-    HtmlBody,
-    TextBody,
-    Attachments: attachments,
-    MessageStream: 'outbound',
+    resend_payload: resendPayload,
     // Pass through for downstream high-gap check
     strategic_gap_score: strategicGapScore,
     company_name: companyName,
     name,
-    email: email,
+    email,
     sunday_dread: sundayDread,
+    gatekeeper_path: gatekeeperPath,
   }
 }];
