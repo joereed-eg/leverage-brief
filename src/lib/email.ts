@@ -196,7 +196,7 @@ export async function sendAdminNotification(lead: LeadDetails) {
     ["Biggest Obstacle", lead.biggest_obstacle],
   ]
     .filter(([label, value]) => label === "" || value)
-    .map(([label, value]) => {
+    .map(([label = "", value]) => {
       if (label === "") return "";
       if (label.startsWith("---")) return `<tr><td colspan="2" style="padding: 12px 0 4px; font-weight: 700; font-size: 13px; color: #27E7FE; border-bottom: 1px solid #e0ddd8;">${label.replace(/---/g, "").trim()}</td></tr>`;
       return `<tr><td style="padding: 6px 12px 6px 0; font-weight: 600; font-size: 13px; color: #666; vertical-align: top; white-space: nowrap;">${label}</td><td style="padding: 6px 0; font-size: 13px; color: #000;">${value}</td></tr>`;
