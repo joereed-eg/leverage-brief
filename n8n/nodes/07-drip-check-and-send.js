@@ -1,40 +1,57 @@
 /**
- * n8n Function Node: Drip Email Check + Send (Branch A — Resume Nurture)
+ * n8n Function Node: Drip Email Check + Send via Resend
  *
  * Called by n8n Schedule Trigger (runs every hour).
  * Iterates partial_records and checks if drip emails need sending.
  *
- * HALT CONDITION: Before sending T+24h or T+72h emails, queries Zoho CRM
- * to check live partial_status. If 'completed', skips email and updates
- * local record to prevent future checks.
+ * STOP CONDITIONS:
+ *   1. Lead completed assessment (partial_status = 'completed' in Zoho)
+ *   2. Lead clicked unsubscribe link (drip_stopped = true in static data)
+ *   3. Joe manually set Drip_Stopped in Zoho
+ *   4. 30 days elapsed → mark abandoned
  *
- * Email sequence:
+ * Email sequence (resume nurture for partial submits):
  *   Email 1 — Immediate (sent by 05-partial-save, NOT this node)
  *   Email 2 — T+24h
  *   Email 3 — T+72h (final)
  *
+ * All emails sent via Resend HTTP API.
+ * Each email includes an unsubscribe link: /api/drip/stop?email=...&token=...
+ *
  * Input:  Triggered by schedule. Receives zoho_access_token from upstream auth node.
- * Output: Array of Postmark email payloads to send
+ * Output: Array of Resend email payloads to send (downstream HTTP Request node)
  */
+
+const crypto = require('crypto');
 
 const staticData = $getWorkflowStaticData('global');
 const partialRecords = staticData.partial_records || {};
+const stoppedEmails = staticData.stopped_emails || {};
 const now = Date.now();
 const HOUR = 3600000;
 const zohoToken = $input.first().json.zoho_access_token || null;
+const HMAC_SECRET = $env.HMAC_SECRET || 'fulcrum-dev-secret';
+const APP_URL = $env.APP_URL || 'https://leverage.fulcrumcollective.io';
+const FROM_EMAIL = $env.RESEND_FROM_EMAIL || 'joe@fulcrumcollective.io';
 
 const emailsToSend = [];
-const zohoCheckErrors = [];
 
 for (const [resumeId, record] of Object.entries(partialRecords)) {
   // Skip completed or abandoned
   if (record.partial_status !== 'in_progress') continue;
 
+  // Check stop list (unsubscribe clicks)
+  if (stoppedEmails[record.email]) {
+    partialRecords[resumeId].partial_status = 'unsubscribed';
+    partialRecords[resumeId].unsubscribed_at = stoppedEmails[record.email];
+    continue;
+  }
+
   const createdAt = new Date(record.created_at).getTime();
   const emailsSent = record.drip_emails_sent || 0;
   const hoursSinceCreated = (now - createdAt) / HOUR;
 
-  // Mark as abandoned after 30 days (720 hours)
+  // Mark as abandoned after 30 days
   if (hoursSinceCreated > 720) {
     partialRecords[resumeId].partial_status = 'abandoned';
     partialRecords[resumeId].abandoned_at = new Date().toISOString();
@@ -47,61 +64,55 @@ for (const [resumeId, record] of Object.entries(partialRecords)) {
 
   if (!shouldSendEmail2 && !shouldSendEmail3) continue;
 
-  // --- HALT CONDITION: Check Zoho partial_status before sending ---
+  // --- HALT CONDITION: Check Zoho before sending ---
   if (zohoToken) {
     try {
       const zohoResponse = await this.helpers.httpRequest({
         method: 'GET',
         url: `https://www.zohoapis.com/crm/v2/Leads/search?email=${encodeURIComponent(record.email)}`,
-        headers: {
-          'Authorization': `Zoho-oauthtoken ${zohoToken}`,
-        },
+        headers: { 'Authorization': `Zoho-oauthtoken ${zohoToken}` },
         timeout: 10000,
       });
 
       const lead = zohoResponse?.data?.[0];
-      if (lead && lead.partial_status === 'completed') {
-        // Lead completed the assessment — halt drip
-        partialRecords[resumeId].partial_status = 'completed';
-        partialRecords[resumeId].completed_at = new Date().toISOString();
-        partialRecords[resumeId].completed_source = 'zoho_drip_check';
-        continue;
-      }
-
-      // Also check Fulcrum_Stop_Auto kill switch
-      if (lead && lead.Fulcrum_Stop_Auto === true) {
-        partialRecords[resumeId].partial_status = 'abandoned';
-        partialRecords[resumeId].abandoned_at = new Date().toISOString();
-        partialRecords[resumeId].abandoned_reason = 'fulcrum_stop_auto';
-        continue;
+      if (lead) {
+        if (lead.partial_status === 'completed') {
+          partialRecords[resumeId].partial_status = 'completed';
+          continue;
+        }
+        if (lead.Drip_Stopped === true) {
+          partialRecords[resumeId].partial_status = 'unsubscribed';
+          continue;
+        }
       }
     } catch (zohoErr) {
-      // Zoho check failed — log but still send email (fail-open for drip)
-      zohoCheckErrors.push({
-        resume_id: resumeId,
-        email: record.email,
-        error: zohoErr.message,
-      });
+      // Zoho check failed — fail-open, still send email
+      console.log('Zoho check failed:', zohoErr.message);
     }
   }
 
+  // --- Build unsubscribe link ---
+  const unsubToken = crypto
+    .createHmac('sha256', HMAC_SECRET)
+    .update(record.email.toLowerCase())
+    .digest('hex')
+    .substring(0, 16);
+  const unsubUrl = `${APP_URL}/api/drip/stop?email=${encodeURIComponent(record.email)}&token=${unsubToken}`;
+
   // --- Build email payload ---
-  const firstName = (record.name || '').split(' ')[0] || 'there';
+  const firstName = record.first_name || (record.name || '').split(' ')[0] || 'there';
   const companyName = record.company_name || 'your company';
-  const resumeUrl = `https://fulcrum.com/diagnostic?resume_id=${resumeId}`;
+  const resumeUrl = `${APP_URL}?resume_id=${resumeId}`;
 
   if (shouldSendEmail2) {
     emailsToSend.push({
       resume_id: resumeId,
-      email: record.email,
-      drip_number: 2,
-      postmark_payload: {
-        From: 'assessments@mail.fulcrum.com',
-        To: record.email,
-        Subject: `Still thinking it over, ${firstName}?`,
-        HtmlBody: buildEmail2Html(firstName, companyName, resumeUrl),
-        TextBody: buildEmail2Text(firstName, companyName, resumeUrl),
-        MessageStream: 'outbound',
+      resend_payload: {
+        from: FROM_EMAIL,
+        to: record.email,
+        reply_to: 'joe@fulcrumcollective.io',
+        subject: `Still thinking it over, ${firstName}?`,
+        html: buildEmail2Html(firstName, companyName, resumeUrl, unsubUrl),
       },
     });
     partialRecords[resumeId].drip_emails_sent = 2;
@@ -111,15 +122,12 @@ for (const [resumeId, record] of Object.entries(partialRecords)) {
   if (shouldSendEmail3) {
     emailsToSend.push({
       resume_id: resumeId,
-      email: record.email,
-      drip_number: 3,
-      postmark_payload: {
-        From: 'assessments@mail.fulcrum.com',
-        To: record.email,
-        Subject: `Last chance: Your Fulcrum Assessment is expiring, ${firstName}`,
-        HtmlBody: buildEmail3Html(firstName, companyName, resumeUrl),
-        TextBody: buildEmail3Text(firstName, companyName, resumeUrl),
-        MessageStream: 'outbound',
+      resend_payload: {
+        from: FROM_EMAIL,
+        to: record.email,
+        reply_to: 'joe@fulcrumcollective.io',
+        subject: `Last chance: Your Leverage Brief assessment is expiring, ${firstName}`,
+        html: buildEmail3Html(firstName, companyName, resumeUrl, unsubUrl),
       },
     });
     partialRecords[resumeId].drip_emails_sent = 3;
@@ -129,14 +137,10 @@ for (const [resumeId, record] of Object.entries(partialRecords)) {
 
 // Persist updates
 staticData.partial_records = partialRecords;
+staticData.stopped_emails = stoppedEmails;
 
-// Return emails to send (downstream Postmark HTTP node will iterate)
 if (emailsToSend.length === 0) {
-  return [{ json: {
-    no_emails: true,
-    zoho_check_errors: zohoCheckErrors,
-    records_scanned: Object.keys(partialRecords).length,
-  }}];
+  return [{ json: { no_emails: true, records_scanned: Object.keys(partialRecords).length } }];
 }
 
 return emailsToSend.map(e => ({ json: e }));
@@ -145,15 +149,18 @@ return emailsToSend.map(e => ({ json: e }));
 // EMAIL TEMPLATES
 // ═══════════════════════════════════════════════
 
-function buildEmail2Html(name, company, url) {
+function buildEmail2Html(name, company, url, unsubUrl) {
   return `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
-<body style="font-family: 'Satoshi', Arial, sans-serif; background: #F7F5F2; color: #000; padding: 40px 20px;">
+<body style="font-family: Arial, Helvetica, sans-serif; background: #F7F5F2; color: #000; padding: 40px 20px;">
   <div style="max-width: 560px; margin: 0 auto;">
+    <div style="margin-bottom: 24px;">
+      <a href="https://www.fulcrumcollective.io"><img src="https://fulcrumcollective.io/wp-content/uploads/2026/03/Fulcrum-Logo.png" alt="Fulcrum Collective" width="120" style="width: 120px; height: auto;" /></a>
+    </div>
     <h2 style="font-size: 22px; margin-bottom: 16px;">Still thinking it over, ${name}?</h2>
     <p style="font-size: 16px; line-height: 1.6; color: #333;">
-      We saved your progress on the Fulcrum Assessment for <strong>${company}</strong>.
+      We saved your progress on the Leverage Brief assessment for <strong>${company}</strong>.
       It only takes a few more minutes to complete.
     </p>
     <p style="font-size: 16px; line-height: 1.6; color: #333;">
@@ -164,42 +171,32 @@ function buildEmail2Html(name, company, url) {
         Resume My Assessment &rarr;
       </a>
     </div>
-    <hr style="border: none; border-top: 1px solid #e0ddd8; margin: 32px 0;" />
     <p style="font-size: 14px; color: #666;">
       <strong>Need help?</strong> Reply to this email and our team will assist you.
     </p>
-    <p style="font-size: 13px; color: #999; margin-top: 24px;">
-      Fulcrum Collective &middot; <a href="#" style="color: #999;">Unsubscribe</a>
-    </p>
+    <div style="margin-top: 32px; padding-top: 16px; border-top: 1px solid #e0ddd8;">
+      <p style="font-size: 11px; color: #aaa;">
+        Fulcrum Collective &middot;
+        <a href="${unsubUrl}" style="color: #aaa;">Unsubscribe</a>
+      </p>
+    </div>
   </div>
 </body>
 </html>`;
 }
 
-function buildEmail2Text(name, company, url) {
-  return `Still thinking it over, ${name}?
-
-We saved your progress on the Fulcrum Assessment for ${company}. It only takes a few more minutes to complete.
-
-Your personalized Leverage Brief is waiting — pick up right where you left off.
-
-Resume My Assessment: ${url}
-
-Need help? Reply to this email and our team will assist you.
-
-—
-Fulcrum Collective`;
-}
-
-function buildEmail3Html(name, company, url) {
+function buildEmail3Html(name, company, url, unsubUrl) {
   return `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
-<body style="font-family: 'Satoshi', Arial, sans-serif; background: #F7F5F2; color: #000; padding: 40px 20px;">
+<body style="font-family: Arial, Helvetica, sans-serif; background: #F7F5F2; color: #000; padding: 40px 20px;">
   <div style="max-width: 560px; margin: 0 auto;">
+    <div style="margin-bottom: 24px;">
+      <a href="https://www.fulcrumcollective.io"><img src="https://fulcrumcollective.io/wp-content/uploads/2026/03/Fulcrum-Logo.png" alt="Fulcrum Collective" width="120" style="width: 120px; height: auto;" /></a>
+    </div>
     <h2 style="font-size: 22px; margin-bottom: 16px;">Last chance, ${name}</h2>
     <p style="font-size: 16px; line-height: 1.6; color: #333;">
-      We know you're busy — that's exactly why the Fulcrum Assessment exists. In just a few more minutes,
+      We know you're busy — that's exactly why the Leverage Brief exists. In just a few more minutes,
       you'll have a clear set of priorities for <strong>${company}</strong>.
     </p>
     <p style="font-size: 16px; line-height: 1.6; color: #333;">
@@ -210,29 +207,16 @@ function buildEmail3Html(name, company, url) {
         Complete My Assessment &rarr;
       </a>
     </div>
-    <hr style="border: none; border-top: 1px solid #e0ddd8; margin: 32px 0;" />
     <p style="font-size: 14px; color: #666;">
       <strong>Questions?</strong> Reply to this email — our team reads every response.
     </p>
-    <p style="font-size: 13px; color: #999; margin-top: 24px;">
-      Fulcrum Collective &middot; <a href="#" style="color: #999;">Unsubscribe</a>
-    </p>
+    <div style="margin-top: 32px; padding-top: 16px; border-top: 1px solid #e0ddd8;">
+      <p style="font-size: 11px; color: #aaa;">
+        Fulcrum Collective &middot;
+        <a href="${unsubUrl}" style="color: #aaa;">Unsubscribe</a>
+      </p>
+    </div>
   </div>
 </body>
 </html>`;
-}
-
-function buildEmail3Text(name, company, url) {
-  return `Last chance, ${name}
-
-We know you're busy — that's exactly why the Fulcrum Assessment exists. In just a few more minutes, you'll have a clear set of priorities for ${company}.
-
-Your saved progress will expire soon. This is our final reminder.
-
-Complete My Assessment: ${url}
-
-Questions? Reply to this email — our team reads every response.
-
-—
-Fulcrum Collective`;
 }

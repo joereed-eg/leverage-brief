@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { verifyRequest } from "@/lib/verify-hmac";
+import { sendPartialNotification } from "@/lib/email";
 
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_ASSESS_PARTIAL;
 
@@ -17,6 +18,19 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "Email is required for Save for Later" },
         { status: 400 }
+      );
+    }
+
+    // Notify admin on Step 1 auto-capture (fire-and-forget)
+    if (body.capture_type === "step1_auto") {
+      sendPartialNotification({
+        first_name: body.first_name as string,
+        last_name: body.last_name as string,
+        email: body.email as string,
+        company_name: body.company_name as string,
+        company_url: body.company_url as string,
+      }).catch((err) =>
+        console.error("Partial admin notification failed:", err)
       );
     }
 

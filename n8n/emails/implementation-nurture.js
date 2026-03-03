@@ -13,10 +13,11 @@
  *   LITE:    Day 0, 5, 7
  */
 
+const crypto = require('crypto');
+
 const lead = $input.first().json;
 const email = lead.email || '';
-const name = lead.name || '';
-const firstName = name.split(' ')[0] || 'there';
+const firstName = lead.first_name || (lead.name || '').split(' ')[0] || 'there';
 const companyName = lead.company_name || 'your company';
 const gatekeeperPath = lead.gatekeeper_path || 'LITE';
 const strategicGapScore = lead.strategic_gap_score || 0;
@@ -27,7 +28,18 @@ const monthlyFocus = lead.monthly_focus || '';
 
 const emailIndex = lead._nurture_email_index || 0;
 
-const bookingUrl = 'https://fulcrum.com/book-strategy-session';
+const bookingUrl = 'https://cal.com/fulcrumcollective/discovery-call';
+const FROM_EMAIL = $env.RESEND_FROM_EMAIL || 'joe@fulcrumcollective.io';
+const APP_URL = $env.APP_URL || 'https://leverage.fulcrumcollective.io';
+const HMAC_SECRET = $env.HMAC_SECRET || 'fulcrum-dev-secret';
+
+// Build unsubscribe link
+const unsubToken = crypto
+  .createHmac('sha256', HMAC_SECRET)
+  .update(email.toLowerCase())
+  .digest('hex')
+  .substring(0, 16);
+const unsubUrl = `${APP_URL}/api/drip/stop?email=${encodeURIComponent(email)}&token=${unsubToken}`;
 
 // --- PREMIUM TRACK: 5 emails ---
 const premiumEmails = [
@@ -138,12 +150,13 @@ if (!currentEmail) {
 
 return [{
   json: {
-    From: 'team@fulcrum.com',
-    To: email,
-    Subject: currentEmail.Subject,
-    HtmlBody: currentEmail.buildHtml(),
-    TextBody: currentEmail.buildText(),
-    MessageStream: 'outbound',
+    resend_payload: {
+      from: FROM_EMAIL,
+      to: email,
+      reply_to: 'joe@fulcrumcollective.io',
+      subject: currentEmail.Subject,
+      html: currentEmail.buildHtml(),
+    },
     _nurture_email_index: emailIndex,
     _nurture_track: gatekeeperPath,
   }
@@ -165,13 +178,18 @@ function wrapHtml(content) {
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
-<body style="font-family: 'Satoshi', Arial, sans-serif; background: #F7F5F2; color: #000; padding: 40px 20px;">
+<body style="font-family: Arial, Helvetica, sans-serif; background: #F7F5F2; color: #000; padding: 40px 20px;">
   <div style="max-width: 560px; margin: 0 auto;">
+    <div style="margin-bottom: 24px;">
+      <a href="https://www.fulcrumcollective.io"><img src="https://fulcrumcollective.io/wp-content/uploads/2026/03/Fulcrum-Logo.png" alt="Fulcrum Collective" width="120" style="width: 120px; height: auto;" /></a>
+    </div>
     ${content}
-    <hr style="border: none; border-top: 1px solid #e0ddd8; margin: 32px 0;" />
-    <p style="font-size: 13px; color: #999;">
-      Fulcrum Collective &middot; <a href="#" style="color: #999;">Unsubscribe</a>
-    </p>
+    <div style="margin-top: 32px; padding-top: 16px; border-top: 1px solid #e0ddd8;">
+      <p style="font-size: 11px; color: #aaa;">
+        Fulcrum Collective &middot;
+        <a href="${unsubUrl}" style="color: #aaa;">Unsubscribe</a>
+      </p>
+    </div>
   </div>
 </body>
 </html>`.trim();

@@ -37,6 +37,7 @@ export function AssessmentModal({
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
+  const [step1Captured, setStep1Captured] = useState(false);
 
   // Resume from partial — hydrate from backend
   useEffect(() => {
@@ -130,9 +131,43 @@ export function AssessmentModal({
     return emailValid && company.trim().length > 0 && consent;
   };
 
+  // Silent Step 1 capture — fire once when they advance past Step 1
+  const captureStep1 = useCallback(() => {
+    if (step1Captured) return;
+    setStep1Captured(true);
+
+    // Fire-and-forget: save partial + notify admin
+    postSigned(ENDPOINTS.ASSESS_PARTIAL, {
+      email: answers.email,
+      first_name: answers.first_name || "",
+      last_name: answers.last_name || "",
+      company_name: answers.company_name || "",
+      company_url: answers.company_url || "",
+      partial_progress_step: 1,
+      capture_type: "step1_auto",
+      referrer_url: window.location.href,
+      form_state: {
+        email: answers.email,
+        first_name: answers.first_name,
+        last_name: answers.last_name,
+        company_name: answers.company_name,
+        company_url: answers.company_url,
+        consent_agreed: answers.consent_agreed,
+      },
+    }).catch(() => {
+      // Silent — Step 1 data persists in localStorage regardless
+    });
+  }, [answers, step1Captured]);
+
   // Navigate steps
   const goNext = () => {
     if (currentStep === 0 && !isStep1Valid()) return;
+
+    // Auto-capture on Step 1 → Step 2 transition
+    if (currentStep === 0) {
+      captureStep1();
+    }
+
     if (currentStep < TOTAL_STEPS - 1) {
       setCurrentStep(currentStep + 1);
     }

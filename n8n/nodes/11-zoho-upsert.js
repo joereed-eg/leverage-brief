@@ -65,6 +65,16 @@ const winRate = data.win_rate || '';
 const fulcrumPriorities = data.fulcrum_priorities || '';
 const monthlyFocus = data.monthly_focus || '';
 const biggestObstacle = data.biggest_obstacle || '';
+const engagementReadiness = data.engagement_readiness || '';
+
+// Readiness label for CRM
+const readinessMap = {
+  now: 'HOT — Needs guidance now',
+  '30_days': 'WARM — Within 30 days',
+  next_quarter: 'COOL — Next quarter',
+  just_looking: 'COLD — Just curious',
+};
+const readinessLabel = readinessMap[engagementReadiness] || 'Not specified';
 
 // Resume & PDF
 const resumeId = data.resume_id || '';
@@ -104,6 +114,7 @@ const zohoRecord = {
   Lead_Interest_Summary: biggestBet,
   Sunday_Dread: sundayDread,
   Fulcrum_Priorities: fulcrumPriorities,
+  Engagement_Readiness: readinessLabel,
   partial_status: 'completed',
   Assessment_Tier: gatekeeperPath,
 
@@ -121,6 +132,7 @@ const zohoRecord = {
   // Description — full assessment dump for quick CRM scan
   Description: [
     `=== FULCRUM ASSESSMENT COMPLETE ===`,
+    `Engagement Readiness: ${readinessLabel}`,
     `Strategic Gap Score: ${strategicGapScore}/10`,
     `Gatekeeper Path: ${gatekeeperPath}`,
     `Strategic Path: ${strategicPath}`,

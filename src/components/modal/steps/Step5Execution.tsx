@@ -9,6 +9,13 @@ interface Step5Props {
   isSubmitting: boolean;
 }
 
+const READINESS_OPTIONS = [
+  { value: "now", label: "Already in motion — I need guidance now" },
+  { value: "30_days", label: "Within the next 30 days" },
+  { value: "next_quarter", label: "Next quarter — still exploring" },
+  { value: "just_looking", label: "Just curious — no timeline yet" },
+];
+
 export function Step5Execution({
   answers,
   onUpdate,
@@ -69,6 +76,29 @@ export function Step5Execution({
           onChange={(e) => onUpdate("biggest_obstacle", e.target.value)}
           className="w-full px-4 py-3 rounded-lg border border-black/15 bg-white text-black placeholder:text-black/30 focus:outline-none focus:ring-2 focus:ring-[#27E7FE] transition-shadow resize-none"
         />
+      </div>
+
+      {/* Engagement Readiness */}
+      <div>
+        <label
+          htmlFor="engagement_readiness"
+          className="block text-sm font-semibold mb-1.5"
+        >
+          How soon are you looking to make a strategic change?
+        </label>
+        <select
+          id="engagement_readiness"
+          value={(answers.engagement_readiness as string) || ""}
+          onChange={(e) => onUpdate("engagement_readiness", e.target.value)}
+          className="w-full px-4 py-3 rounded-lg border border-black/15 bg-white text-black focus:outline-none focus:ring-2 focus:ring-[#27E7FE] transition-shadow appearance-none cursor-pointer"
+        >
+          <option value="">Select timeline...</option>
+          {READINESS_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* Submit */}
