@@ -34,8 +34,11 @@ const revenueFormatted = annualRevenue
   ? `$${Number(annualRevenue).toLocaleString()}`
   : 'Not available';
 
-// Zoho deep link
-const zohoDeepLink = `https://crm.zoho.com/crm/org/tab/Leads?searchText=${encodeURIComponent(email)}`;
+// Zoho direct link — use lead ID if available, fallback to search
+const zohoLeadId = data.zoho_lead_id || null;
+const zohoDeepLink = zohoLeadId
+  ? `https://crm.zoho.com/crm/tab/Leads/${zohoLeadId}`
+  : `https://crm.zoho.com/crm/tab/Leads?searchText=${encodeURIComponent(email)}`;
 
 // Engagement readiness mapping
 const readinessMap = {

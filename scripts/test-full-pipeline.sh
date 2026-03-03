@@ -38,7 +38,7 @@ generate_signature() {
   local payload="$1"
   local timestamp="$2"
   local message="${timestamp}.${payload}"
-  echo -n "$message" | openssl dgst -sha256 -hmac "$HMAC_SECRET" | awk '{print $2}'
+  echo -n "$message" | openssl dgst -sha256 -hmac "$HMAC_SECRET" | awk '{print $NF}'
 }
 
 # ═══════════════════════════════════════════════
@@ -142,9 +142,9 @@ FULL_PAYLOAD=$(echo "$FULL_PAYLOAD" | sed "s/TEST_EMAIL_PLACEHOLDER/$TEST_EMAIL/
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
 SIGNATURE=$(generate_signature "$FULL_PAYLOAD" "$TIMESTAMP")
 
-echo "  Sending full submission to $APP_URL/api/assess-full..."
+echo "  Sending full submission to $APP_URL/api/assess..."
 FULL_RESPONSE=$(curl -s -w "\n%{http_code}" \
-  -X POST "$APP_URL/api/assess-full" \
+  -X POST "$APP_URL/api/assess" \
   -H "Content-Type: application/json" \
   -H "X-Fulcrum-Timestamp: $TIMESTAMP" \
   -H "X-Fulcrum-Signature: $SIGNATURE" \
@@ -173,7 +173,7 @@ echo ""
 echo "─── TEST 3: Unsubscribe Link ───"
 echo ""
 
-UNSUB_TOKEN=$(echo -n "$TEST_EMAIL" | tr '[:upper:]' '[:lower:]' | openssl dgst -sha256 -hmac "$HMAC_SECRET" | awk '{print $2}' | cut -c1-16)
+UNSUB_TOKEN=$(echo -n "$TEST_EMAIL" | tr '[:upper:]' '[:lower:]' | openssl dgst -sha256 -hmac "$HMAC_SECRET" | awk '{print $NF}' | cut -c1-16)
 UNSUB_URL="$APP_URL/api/drip/stop?email=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TEST_EMAIL'))")&token=$UNSUB_TOKEN"
 
 echo "  Unsubscribe URL: $UNSUB_URL"

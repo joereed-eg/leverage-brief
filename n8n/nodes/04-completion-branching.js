@@ -16,7 +16,26 @@
  * Output: Payload + branching decisions + Zoho API bodies for downstream HTTP nodes
  */
 
-const data = $input.first().json;
+// --- Retrieve stashed pipeline data ---
+// The Zoho HTTP Request node (06c) outputs only the API response,
+// so we retrieve the original pipeline data stashed by 06b.
+const staticData = $getWorkflowStaticData('global');
+const zohoResponse = $input.first().json;
+
+// Extract Zoho lead ID from upsert response
+let zohoLeadId = null;
+try {
+  if (zohoResponse.data && zohoResponse.data[0] && zohoResponse.data[0].details) {
+    zohoLeadId = zohoResponse.data[0].details.id;
+  }
+} catch (e) {
+  // Zoho response didn't contain expected structure
+}
+
+// Restore pipeline data from stash
+const data = staticData._pipeline_stash || {};
+delete staticData._pipeline_stash; // Clean up
+
 const email = data.email || '';
 const firstName = data.first_name || '';
 const gatekeeperPath = data.gatekeeper_path || 'LITE';
@@ -26,7 +45,6 @@ const leadInterestSummary = data.biggest_strategic_bet || '';
 const zohoToken = data.zoho_access_token || null;
 
 // --- Check for existing partial record ---
-const staticData = $getWorkflowStaticData('global');
 const partialRecords = staticData.partial_records || {};
 
 let hadPartialRecord = false;
@@ -104,6 +122,7 @@ const zohoTagRemoval = hadPartialRecord ? {
 return [{
   json: {
     ...data,
+    zoho_lead_id: zohoLeadId,
     completion_branching: {
       had_partial_record: hadPartialRecord,
       partial_resume_id: partialResumeId,

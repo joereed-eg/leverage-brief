@@ -11,6 +11,13 @@
 
 const data = $input.first().json;
 
+// --- Stash full pipeline data in static data ---
+// The downstream Zoho HTTP Request node only outputs the API response,
+// so Completion Branching would lose all pipeline data.
+// Store it here; Completion Branching retrieves it after the upsert.
+const staticData = $getWorkflowStaticData('global');
+staticData._pipeline_stash = JSON.parse(JSON.stringify(data));
+
 // Name — form now collects first/last separately
 const firstName = data.first_name || '';
 const lastName = data.last_name || firstName;
