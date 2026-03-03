@@ -118,8 +118,8 @@ export function AssessmentModal({
   // Dynamic sub-header
   const companyName = (answers.company_name as string) || "";
   const subHeader = companyName
-    ? `A proprietary 90-minute diagnostic for ${companyName}.`
-    : "A proprietary 90-minute diagnostic for your company.";
+    ? `A proprietary strategic diagnostic for ${companyName}.`
+    : "A proprietary strategic diagnostic for your company.";
 
   // Step 1 validation
   const isStep1Valid = () => {

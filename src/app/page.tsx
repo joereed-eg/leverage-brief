@@ -78,7 +78,7 @@ export default function Home() {
           Leverage Brief
         </h1>
         <p className="text-lg mb-8 text-black/60">
-          A proprietary 90-minute diagnostic for your company.
+          A proprietary strategic diagnostic for your company.
         </p>
         <button
           onClick={() => setIsModalOpen(true)}
