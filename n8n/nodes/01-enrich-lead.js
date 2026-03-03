@@ -1,5 +1,8 @@
 /**
- * n8n Function Node: Lead Enrichment via Apollo/Instantly
+ * n8n Function Node: Lead Enrichment via Instantly
+ *
+ * Enriches incoming leads using Instantly's API.
+ * Uses company domain first, falls back to email-based lookup.
  *
  * Input:  Webhook payload with company_url, email, company_name
  * Output: Enriched lead with headcount, annual_revenue, industry, linkedin_url
@@ -20,35 +23,38 @@ let enrichment = {
   enrichment_failed: false,
 };
 
-// --- Apollo Enrichment ---
+// Extract clean domain from company URL
+const domain = companyUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+
+// --- Instantly Enrichment (Company Lookup) ---
 try {
-  const apolloResponse = await this.helpers.httpRequest({
+  const response = await this.helpers.httpRequest({
     method: 'POST',
-    url: 'https://api.apollo.io/v1/organizations/enrich',
-    headers: { 'Content-Type': 'application/json' },
+    url: 'https://api.instantly.ai/api/v2/leads/enrich',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${$env.INSTANTLY_API_KEY}`,
+    },
     body: {
-      api_key: $env.APOLLO_API_KEY,
-      domain: companyUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, ''),
+      email: email,
+      company_domain: domain || undefined,
     },
     timeout: 15000,
   });
 
-  if (apolloResponse.organization) {
-    const org = apolloResponse.organization;
-    enrichment.headcount = org.estimated_num_employees || 0;
-    enrichment.annual_revenue = org.annual_revenue || 0;
-    enrichment.industry = org.industry || 'Unknown';
-    enrichment.linkedin_url = org.linkedin_url || '';
-    enrichment.enrichment_source = 'apollo';
+  if (response) {
+    enrichment.headcount = response.company_headcount || response.company_size || 0;
+    enrichment.annual_revenue = response.company_revenue || response.annual_revenue || 0;
+    enrichment.industry = response.company_industry || response.industry || 'Unknown';
+    enrichment.linkedin_url = response.linkedin_url || response.company_linkedin || '';
+    enrichment.enrichment_source = 'instantly';
   }
-} catch (apolloErr) {
-  console.log('Apollo enrichment failed, trying Instantly fallback:', apolloErr.message);
-}
+} catch (err) {
+  console.log('Instantly enrichment failed:', err.message);
 
-// --- Instantly Fallback (if Apollo missed revenue/headcount) ---
-if (enrichment.headcount === 0 && enrichment.annual_revenue === 0) {
+  // --- Fallback: Try v1 endpoint ---
   try {
-    const instantlyResponse = await this.helpers.httpRequest({
+    const fallbackResponse = await this.helpers.httpRequest({
       method: 'GET',
       url: 'https://api.instantly.ai/api/v1/lead/data',
       qs: {
@@ -58,17 +64,15 @@ if (enrichment.headcount === 0 && enrichment.annual_revenue === 0) {
       timeout: 15000,
     });
 
-    if (instantlyResponse) {
-      enrichment.headcount = instantlyResponse.company_headcount || enrichment.headcount;
-      enrichment.annual_revenue = instantlyResponse.company_revenue || enrichment.annual_revenue;
-      enrichment.industry = instantlyResponse.company_industry || enrichment.industry;
-      enrichment.linkedin_url = instantlyResponse.linkedin_url || enrichment.linkedin_url;
-      enrichment.enrichment_source = enrichment.enrichment_source === 'apollo'
-        ? 'apollo+instantly'
-        : 'instantly';
+    if (fallbackResponse) {
+      enrichment.headcount = fallbackResponse.company_headcount || 0;
+      enrichment.annual_revenue = fallbackResponse.company_revenue || 0;
+      enrichment.industry = fallbackResponse.company_industry || 'Unknown';
+      enrichment.linkedin_url = fallbackResponse.linkedin_url || '';
+      enrichment.enrichment_source = 'instantly_v1';
     }
-  } catch (instantlyErr) {
-    console.log('Instantly enrichment also failed:', instantlyErr.message);
+  } catch (fallbackErr) {
+    console.log('Instantly v1 fallback also failed:', fallbackErr.message);
     enrichment.enrichment_failed = true;
   }
 }
