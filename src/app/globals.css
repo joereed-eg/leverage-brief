@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: #F7F5F2;
+  --color-foreground: #000000;
+  --color-accent: #27E7FE;
+  --color-accent-hover: #1fd4ea;
+  --font-sans: "Satoshi", sans-serif;
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+}

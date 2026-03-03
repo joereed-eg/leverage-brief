@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin: 0; padding: 0; background: #F7F5F2;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background: #F7F5F2;">
+<tr><td align="center" style="padding: 40px 24px;">
+<table width="580" cellpadding="0" cellspacing="0" border="0" style="max-width: 580px; width: 100%; font-family: Arial, Helvetica, sans-serif; color: #000000;">
+<tr><td style="padding: 0 20px;">
+
+    <h2 style="font-size: 22px; font-weight: 700; margin: 0 0 4px;">Your Monday Morning Actions</h2>
+    <p style="font-size: 14px; color: #666; margin: 0 0 24px;">Leverage Brief Follow-up for ${Leads.Company}</p>
+
+    <p style="font-size: 16px; line-height: 1.6;">${Leads.First Name},</p>
+
+    <p style="font-size: 16px; line-height: 1.6;">
+      You completed your Leverage Brief — now it's about execution.
+      Your Strategic Gap Score came in at <strong>${Leads.Strategic_Gap_Score}/10</strong>,
+      and your biggest strategic bet is: <strong>${Leads.Lead_Interest_Summary}</strong>.
+    </p>
+
+    <p style="font-size: 16px; line-height: 1.6;">
+      Here's how to make this week count:
+    </p>
+
+    <div style="border-left: 4px solid #27E7FE; padding: 12px 16px; margin: 20px 0; background: rgba(39,231,254,0.05); border-radius: 0 6px 6px 0;">
+      <p style="margin: 0; font-size: 14px; line-height: 1.6;">
+        <strong>Action 1:</strong> Open your Leverage Brief and find the first Monday Morning Action.
+        Block 90 minutes on your calendar this week to execute just that one item.
+      </p>
+    </div>
+
+    <div style="border-left: 4px solid #27E7FE; padding: 12px 16px; margin: 20px 0; background: rgba(39,231,254,0.05); border-radius: 0 6px 6px 0;">
+      <p style="margin: 0; font-size: 14px; line-height: 1.6;">
+        <strong>Action 2:</strong> Identify the one person on your team who needs to see your brief this week.
+        Share it with them and set a 15-minute check-in to discuss.
+      </p>
+    </div>
+
+    <p style="font-size: 14px; color: #666; margin-top: 24px;">
+      <a href="${Leads.PDF_Download_URL}" style="color: #000; font-weight: 600;">Re-download your Leverage Brief &darr;</a>
+    </p>
+
+    <div style="margin-top: 32px; padding-top: 16px; border-top: 1px solid #e0ddd8;">
+      <p style="font-size: 11px; color: #aaa;">
+        Fulcrum Collective &middot; Reply to stop receiving these emails &middot;
+        <a href="${organization.unsubscribe_link}" style="color: #aaa;">Unsubscribe</a>
+      </p>
+    </div>
+
+</td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>

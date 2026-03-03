@@ -1,0 +1,384 @@
+{
+  "name": "Leverage Brief — Full Assessment Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fulcrum-assess-full",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-full",
+      "name": "Webhook: Full Submit",
+      "type": "n8n-nodes-base.webhook",
+      "position": [200, 300],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "functionCode": "// Paste contents of n8n/nodes/01-enrich-lead.js"
+      },
+      "id": "enrich-lead",
+      "name": "01 — Enrich Lead (Apollo/Instantly)",
+      "type": "n8n-nodes-base.function",
+      "position": [420, 300],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "// Paste contents of n8n/nodes/02-gatekeeper.js"
+      },
+      "id": "gatekeeper",
+      "name": "02 — Gatekeeper 2.5",
+      "type": "n8n-nodes-base.function",
+      "position": [640, 300],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.is_premium }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-premium",
+      "name": "IF: Premium Path?",
+      "type": "n8n-nodes-base.if",
+      "position": [860, 300],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "// Paste contents of n8n/nodes/03-perplexity-research.js"
+      },
+      "id": "perplexity-research",
+      "name": "03 — Perplexity Deep Research",
+      "type": "n8n-nodes-base.function",
+      "position": [1080, 200],
+      "typeVersion": 1,
+      "notesInFlow": true,
+      "notes": "PREMIUM path only. 60s timeout. Sets research_failed=true on failure."
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "research_model",
+              "value": "skipped_lite"
+            }
+          ],
+          "boolean": [
+            {
+              "name": "research_failed",
+              "value": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "lite-skip-research",
+      "name": "LITE: Skip Research",
+      "type": "n8n-nodes-base.set",
+      "position": [1080, 420],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {},
+      "id": "merge-paths",
+      "name": "Merge Premium/Lite",
+      "type": "n8n-nodes-base.merge",
+      "position": [1300, 300],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "functionCode": "// Paste contents of n8n/nodes/04-claude-synthesis.js"
+      },
+      "id": "claude-synthesis",
+      "name": "04 — Claude Synthesis",
+      "type": "n8n-nodes-base.function",
+      "position": [1520, 300],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "// PDF generation — calls /api/pdf endpoint.\n// Returns pdf_base64 for downstream storage."
+      },
+      "id": "pdf-generation",
+      "name": "05 — Generate PDF",
+      "type": "n8n-nodes-base.function",
+      "position": [1740, 300],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "// Paste contents of n8n/nodes/05b-store-pdf.js\n// Stores PDF in Vercel Blob, returns pdf_download_url"
+      },
+      "id": "pdf-store",
+      "name": "05b — Store PDF + Get URL",
+      "type": "n8n-nodes-base.function",
+      "position": [1960, 300],
+      "typeVersion": 1,
+      "notesInFlow": true,
+      "notes": "Stores PDF in Vercel Blob. Returns pdf_download_url for Zoho."
+    },
+    {
+      "parameters": {
+        "functionCode": "// Paste contents of n8n/nodes/00-zoho-auth.js"
+      },
+      "id": "zoho-auth",
+      "name": "06a — Zoho Auth Refresh",
+      "type": "n8n-nodes-base.function",
+      "position": [2180, 300],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "// Paste contents of n8n/nodes/11-zoho-upsert.js"
+      },
+      "id": "zoho-build-payload",
+      "name": "06b — Build Zoho Payload",
+      "type": "n8n-nodes-base.function",
+      "position": [2400, 300],
+      "typeVersion": 1,
+      "notesInFlow": true,
+      "notes": "Maps all data to Zoho Lead fields including PDF_Download_URL, Resume_URL."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.zohoapis.com/crm/v2/Leads/upsert",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Zoho-oauthtoken {{ $json.zoho_access_token }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ data: [$json.zoho_record], duplicate_check_fields: $json.upsert_criteria.duplicate_check_fields }) }}",
+        "options": {
+          "timeout": 15000,
+          "response": { "response": { "neverError": true } }
+        }
+      },
+      "id": "zoho-upsert",
+      "name": "06c — Zoho CRM Upsert",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [2620, 300],
+      "typeVersion": 4,
+      "notesInFlow": true,
+      "notes": "Upserts Lead with all custom fields. Zoho Workflow Rules trigger emails automatically.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Paste contents of n8n/nodes/04-completion-branching.js\n// Marks partial records as completed, prepares state transition"
+      },
+      "id": "completion-branching",
+      "name": "07 — Completion Branching",
+      "type": "n8n-nodes-base.function",
+      "position": [2840, 300],
+      "typeVersion": 1,
+      "notesInFlow": true,
+      "notes": "State machine: marks prior partial as completed. Zoho handles nurture enrollment via Cadences."
+    },
+    {
+      "parameters": {
+        "functionCode": "// Paste contents of n8n/nodes/09-admin-godview.js\n// Admin notification — internal only, still sends via Postmark/SMTP"
+      },
+      "id": "admin-godview",
+      "name": "08 — Admin God-View Email",
+      "type": "n8n-nodes-base.function",
+      "position": [3060, 200],
+      "typeVersion": 1,
+      "notesInFlow": true,
+      "notes": "Internal admin notification. Still uses Postmark — this is NOT a lead-facing email."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.postmarkapp.com/email",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Postmark-Server-Token", "value": "={{ $env.POSTMARK_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ From: $json.From, To: $json.To, Subject: $json.Subject, HtmlBody: $json.HtmlBody, TextBody: $json.TextBody, Attachments: $json.Attachments || [], MessageStream: 'outbound' }) }}",
+        "options": {
+          "timeout": 15000,
+          "response": { "response": { "neverError": true } }
+        }
+      },
+      "id": "postmark-admin",
+      "name": "Postmark: Admin Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [3280, 200],
+      "typeVersion": 4,
+      "notesInFlow": true,
+      "notes": "Admin-only email via Postmark. Lead-facing emails handled by Zoho.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.strategic_gap_score }}",
+              "operation": "larger",
+              "value2": 7
+            }
+          ]
+        }
+      },
+      "id": "if-high-gap",
+      "name": "IF: High Gap Score > 7?",
+      "type": "n8n-nodes-base.if",
+      "position": [3060, 420],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "// Paste contents of n8n/nodes/10-high-gap-alert.js"
+      },
+      "id": "slack-alert",
+      "name": "09 — Slack High-Gap Alert",
+      "type": "n8n-nodes-base.function",
+      "position": [3280, 420],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": true }",
+        "options": {}
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [1960, 500],
+      "typeVersion": 1,
+      "notesInFlow": true,
+      "notes": "Respond immediately after PDF store trigger so frontend isn't waiting."
+    },
+    {
+      "parameters": {
+        "functionCode": "// Log final pipeline result\nconst data = $input.first().json;\nconsole.log(`Pipeline complete: ${data.email} | Gap: ${data.strategic_gap_score} | Path: ${data.gatekeeper_path}`);\nreturn [{ json: { pipeline_complete: true, timestamp: new Date().toISOString() } }];"
+      },
+      "id": "pipeline-log",
+      "name": "10 — Pipeline Complete Log",
+      "type": "n8n-nodes-base.function",
+      "position": [3280, 300],
+      "typeVersion": 1
+    }
+  ],
+  "connections": {
+    "Webhook: Full Submit": {
+      "main": [
+        [{ "node": "01 — Enrich Lead (Apollo/Instantly)", "type": "main", "index": 0 }]
+      ]
+    },
+    "01 — Enrich Lead (Apollo/Instantly)": {
+      "main": [
+        [{ "node": "02 — Gatekeeper 2.5", "type": "main", "index": 0 }]
+      ]
+    },
+    "02 — Gatekeeper 2.5": {
+      "main": [
+        [{ "node": "IF: Premium Path?", "type": "main", "index": 0 }]
+      ]
+    },
+    "IF: Premium Path?": {
+      "main": [
+        [{ "node": "03 — Perplexity Deep Research", "type": "main", "index": 0 }],
+        [{ "node": "LITE: Skip Research", "type": "main", "index": 0 }]
+      ]
+    },
+    "03 — Perplexity Deep Research": {
+      "main": [
+        [{ "node": "Merge Premium/Lite", "type": "main", "index": 0 }]
+      ]
+    },
+    "LITE: Skip Research": {
+      "main": [
+        [{ "node": "Merge Premium/Lite", "type": "main", "index": 1 }]
+      ]
+    },
+    "Merge Premium/Lite": {
+      "main": [
+        [{ "node": "04 — Claude Synthesis", "type": "main", "index": 0 }]
+      ]
+    },
+    "04 — Claude Synthesis": {
+      "main": [
+        [{ "node": "05 — Generate PDF", "type": "main", "index": 0 }]
+      ]
+    },
+    "05 — Generate PDF": {
+      "main": [
+        [
+          { "node": "05b — Store PDF + Get URL", "type": "main", "index": 0 },
+          { "node": "Respond to Webhook", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "05b — Store PDF + Get URL": {
+      "main": [
+        [{ "node": "06a — Zoho Auth Refresh", "type": "main", "index": 0 }]
+      ]
+    },
+    "06a — Zoho Auth Refresh": {
+      "main": [
+        [{ "node": "06b — Build Zoho Payload", "type": "main", "index": 0 }]
+      ]
+    },
+    "06b — Build Zoho Payload": {
+      "main": [
+        [{ "node": "06c — Zoho CRM Upsert", "type": "main", "index": 0 }]
+      ]
+    },
+    "06c — Zoho CRM Upsert": {
+      "main": [
+        [{ "node": "07 — Completion Branching", "type": "main", "index": 0 }]
+      ]
+    },
+    "07 — Completion Branching": {
+      "main": [
+        [
+          { "node": "08 — Admin God-View Email", "type": "main", "index": 0 },
+          { "node": "IF: High Gap Score > 7?", "type": "main", "index": 0 },
+          { "node": "10 — Pipeline Complete Log", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "08 — Admin God-View Email": {
+      "main": [
+        [{ "node": "Postmark: Admin Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "IF: High Gap Score > 7?": {
+      "main": [
+        [{ "node": "09 — Slack High-Gap Alert", "type": "main", "index": 0 }],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    { "name": "leverage-brief" },
+    { "name": "production" }
+  ]
+}

@@ -1,0 +1,61 @@
+<!--
+  ZOHO CADENCE EMAIL: LITE Nurture #1 (Day 0 — Assessment Recap + Top 2 Actions)
+
+  Cadence: "Fulcrum Implementation Nurture — LITE"
+  Enrollment: partial_status = 'completed' AND Gatekeeper_Path = 'LITE'
+
+  Zoho Merge Fields:
+    ${Leads.First Name}
+    ${Leads.Company}
+    ${Leads.Strategic_Gap_Score}
+    ${Leads.Lead_Interest_Summary}
+    ${Leads.PDF_Download_URL}
+-->
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: Arial, Helvetica, sans-serif; background: #F7F5F2; color: #000000; padding: 40px 20px; margin: 0;">
+  <div style="max-width: 580px; margin: 0 auto;">
+
+    <h2 style="font-size: 22px; font-weight: 700; margin: 0 0 4px;">Your Top 2 Monday Morning Actions</h2>
+    <p style="font-size: 14px; color: #666; margin: 0 0 24px;">Leverage Brief Follow-up for ${Leads.Company}</p>
+
+    <p style="font-size: 16px; line-height: 1.6;">${Leads.First Name},</p>
+
+    <p style="font-size: 16px; line-height: 1.6;">
+      Your Leverage Brief scored ${Leads.Company} at <strong>${Leads.Strategic_Gap_Score}/10</strong>
+      on the Strategic Gap Scale. Your biggest opportunity: <strong>${Leads.Lead_Interest_Summary}</strong>.
+    </p>
+
+    <p style="font-size: 16px; line-height: 1.6;">
+      Here are the two highest-leverage actions from your brief:
+    </p>
+
+    <div style="border-left: 4px solid #27E7FE; padding: 12px 16px; margin: 16px 0; background: rgba(39,231,254,0.05); border-radius: 0 6px 6px 0;">
+      <p style="margin: 0; font-size: 14px; line-height: 1.6;">
+        <strong>Action 1:</strong> Open your Leverage Brief and find the first Monday Morning Action.
+        Block 60 minutes this week to start it. Don't plan — execute.
+      </p>
+    </div>
+
+    <div style="border-left: 4px solid #27E7FE; padding: 12px 16px; margin: 16px 0; background: rgba(39,231,254,0.05); border-radius: 0 6px 6px 0;">
+      <p style="margin: 0; font-size: 14px; line-height: 1.6;">
+        <strong>Action 2:</strong> Write down the one thing that, if fixed, would make everything else easier.
+        That's your Fulcrum Priority. Keep it visible all week.
+      </p>
+    </div>
+
+    <p style="font-size: 14px; color: #666; margin-top: 24px;">
+      <a href="${Leads.PDF_Download_URL}" style="color: #000; font-weight: 600;">Re-download your Leverage Brief &darr;</a>
+    </p>
+
+    <div style="margin-top: 32px; padding-top: 16px; border-top: 1px solid #e0ddd8;">
+      <p style="font-size: 11px; color: #aaa;">
+        Fulcrum Collective &middot; Reply to stop receiving these emails &middot;
+        <a href="${organization.unsubscribe_link}" style="color: #aaa;">Unsubscribe</a>
+      </p>
+    </div>
+
+  </div>
+</body>
+</html>

@@ -1,0 +1,207 @@
+{
+  "name": "Leverage Brief — Partial Capture (Zoho Handles Emails)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fulcrum-assess-partial",
+        "responseMode": "responseNode",
+        "options": {
+          "responseHeaders": {
+            "entries": [{ "name": "Content-Type", "value": "application/json" }]
+          }
+        }
+      },
+      "id": "webhook-partial",
+      "name": "Webhook: Partial Save",
+      "type": "n8n-nodes-base.webhook",
+      "position": [200, 300],
+      "typeVersion": 2,
+      "webhookId": "fulcrum-assess-partial"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Paste contents of n8n/nodes/05-partial-save.js\n// Generates UUID, dedup by email, stores in workflowStaticData,\n// outputs Zoho API body with resume_id + Resume_URL"
+      },
+      "id": "partial-save",
+      "name": "01 — Partial Save + UUID",
+      "type": "n8n-nodes-base.function",
+      "position": [420, 300],
+      "typeVersion": 1,
+      "notesInFlow": true,
+      "notes": "Paste contents of n8n/nodes/05-partial-save.js"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Paste contents of n8n/nodes/00-zoho-auth.js"
+      },
+      "id": "zoho-auth-partial",
+      "name": "02 — Zoho Auth Refresh",
+      "type": "n8n-nodes-base.function",
+      "position": [640, 300],
+      "typeVersion": 1,
+      "notesInFlow": true,
+      "notes": "Paste contents of n8n/nodes/00-zoho-auth.js"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.zohoapis.com/crm/v2/Leads/upsert",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Zoho-oauthtoken {{ $json.zoho_access_token }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.zoho_api_body) }}",
+        "options": {
+          "timeout": 15000,
+          "response": { "response": { "neverError": true } }
+        }
+      },
+      "id": "zoho-partial-upsert",
+      "name": "03 — Zoho Partial Upsert",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [860, 300],
+      "typeVersion": 4,
+      "notesInFlow": true,
+      "notes": "Upserts lead with partial_status='in_progress', resume_id, Resume_URL.\nZoho Workflow Rules trigger resume nudge emails automatically.\nneverError=true so workflow continues on Zoho failure.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.statusCode }}",
+              "value2": 401
+            }
+          ]
+        }
+      },
+      "id": "if-zoho-401",
+      "name": "IF: Zoho 401 (Token Expired)?",
+      "type": "n8n-nodes-base.if",
+      "position": [1080, 440],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "// Force token refresh by clearing cache\nconst staticData = $getWorkflowStaticData('global');\nstaticData.zoho_access_token = null;\nstaticData.zoho_token_expiry = 0;\nconsole.log('Zoho 401 — forced token refresh for next run');\nreturn [{ json: { ...$input.first().json, zoho_retry_needed: true } }];"
+      },
+      "id": "zoho-force-refresh",
+      "name": "Force Token Refresh",
+      "type": "n8n-nodes-base.function",
+      "position": [1300, 500],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, resume_id: $('01 — Partial Save + UUID').first().json.resume_id }) }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "respond-partial",
+      "name": "Respond: Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [1080, 300],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "// Error handler — logs Zoho failures for ops visibility\nconst error = $input.first().json;\nconsole.log('Partial workflow error:', JSON.stringify(error));\nreturn [{ json: { error_logged: true, timestamp: new Date().toISOString() } }];"
+      },
+      "id": "error-logger",
+      "name": "Error Logger",
+      "type": "n8n-nodes-base.function",
+      "position": [1520, 500],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "get-partial-data",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-get-partial",
+      "name": "Webhook: Get Partial Data",
+      "type": "n8n-nodes-base.webhook",
+      "position": [200, 640],
+      "typeVersion": 2,
+      "webhookId": "get-partial-data"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Paste contents of n8n/nodes/06-get-partial-data.js\n// Lookup by resume_id, return form_state + step"
+      },
+      "id": "get-partial-data",
+      "name": "04 — Get Partial Data",
+      "type": "n8n-nodes-base.function",
+      "position": [420, 640],
+      "typeVersion": 1,
+      "notesInFlow": true,
+      "notes": "Paste contents of n8n/nodes/06-get-partial-data.js"
+    }
+  ],
+  "connections": {
+    "Webhook: Partial Save": {
+      "main": [
+        [{ "node": "01 — Partial Save + UUID", "type": "main", "index": 0 }]
+      ]
+    },
+    "01 — Partial Save + UUID": {
+      "main": [
+        [{ "node": "02 — Zoho Auth Refresh", "type": "main", "index": 0 }]
+      ]
+    },
+    "02 — Zoho Auth Refresh": {
+      "main": [
+        [{ "node": "03 — Zoho Partial Upsert", "type": "main", "index": 0 }]
+      ]
+    },
+    "03 — Zoho Partial Upsert": {
+      "main": [
+        [
+          { "node": "Respond: Success", "type": "main", "index": 0 },
+          { "node": "IF: Zoho 401 (Token Expired)?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "IF: Zoho 401 (Token Expired)?": {
+      "main": [
+        [{ "node": "Force Token Refresh", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Force Token Refresh": {
+      "main": [
+        [{ "node": "Error Logger", "type": "main", "index": 0 }]
+      ]
+    },
+    "Webhook: Get Partial Data": {
+      "main": [
+        [{ "node": "04 — Get Partial Data", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveExecutionProgress": true
+  },
+  "staticData": {
+    "global": {
+      "partial_records": {},
+      "zoho_access_token": null,
+      "zoho_token_expiry": 0
+    }
+  },
+  "tags": [
+    { "name": "leverage-brief" },
+    { "name": "partial-capture" },
+    { "name": "production" }
+  ]
+}

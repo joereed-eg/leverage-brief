@@ -1,0 +1,63 @@
+<!--
+  ZOHO CADENCE EMAIL: LITE Nurture #2 (Day 5 — Accessible Next Steps)
+
+  Zoho Merge Fields:
+    ${Leads.First Name}
+    ${Leads.Company}
+    ${Leads.Fulcrum_Priorities}
+-->
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: Arial, Helvetica, sans-serif; background: #F7F5F2; color: #000000; padding: 40px 20px; margin: 0;">
+  <div style="max-width: 580px; margin: 0 auto;">
+
+    <h2 style="font-size: 22px; font-weight: 700; margin: 0 0 24px;">Small Team? Big Leverage.</h2>
+
+    <p style="font-size: 16px; line-height: 1.6;">${Leads.First Name},</p>
+
+    <p style="font-size: 16px; line-height: 1.6;">
+      When you're running a lean operation, the traditional "strategic planning" advice doesn't fit.
+      You don't have the luxury of dedicated strategy teams or quarter-long planning sessions.
+    </p>
+
+    <p style="font-size: 16px; line-height: 1.6;">
+      But you do have something larger companies don't: <strong>speed</strong>.
+      You can decide on Monday and execute by Friday. That's your unfair advantage.
+    </p>
+
+    <p style="font-size: 16px; line-height: 1.6;">
+      Here's a framework that works at your stage:
+    </p>
+
+    <div style="border-left: 4px solid #27E7FE; padding: 12px 16px; margin: 16px 0; background: rgba(39,231,254,0.05); border-radius: 0 6px 6px 0;">
+      <p style="margin: 0; font-size: 14px; line-height: 1.6;">
+        <strong>The 1-3-1 Rule:</strong> 1 Fulcrum Priority for the quarter.
+        3 measurable milestones to hit. 1 weekly check-in question:
+        "Did we move the needle this week?"
+      </p>
+    </div>
+
+    <p style="font-size: 16px; line-height: 1.6;">
+      You listed these priorities:
+    </p>
+
+    <div style="background: #fff; border: 1px solid #e0ddd8; border-radius: 8px; padding: 16px 20px; margin: 16px 0;">
+      <p style="font-size: 14px; line-height: 1.6; margin: 0; white-space: pre-line;">${Leads.Fulcrum_Priorities}</p>
+    </div>
+
+    <p style="font-size: 16px; line-height: 1.6;">
+      Try applying the 1-3-1 Rule to your top priority. What would the 3 milestones be?
+      Reply and tell me — I'd love to hear how you're thinking about it.
+    </p>
+
+    <div style="margin-top: 32px; padding-top: 16px; border-top: 1px solid #e0ddd8;">
+      <p style="font-size: 11px; color: #aaa;">
+        Fulcrum Collective &middot; Reply to stop receiving these emails &middot;
+        <a href="${organization.unsubscribe_link}" style="color: #aaa;">Unsubscribe</a>
+      </p>
+    </div>
+
+  </div>
+</body>
+</html>

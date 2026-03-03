@@ -1,0 +1,58 @@
+<!--
+  ZOHO CADENCE EMAIL: LITE Nurture #3 (Day 7 — Offer: Intro Call)
+
+  Zoho Merge Fields:
+    ${Leads.First Name}
+    ${Leads.Company}
+    ${Leads.Strategic_Gap_Score}
+-->
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: Arial, Helvetica, sans-serif; background: #F7F5F2; color: #000000; padding: 40px 20px; margin: 0;">
+  <div style="max-width: 580px; margin: 0 auto;">
+
+    <h2 style="font-size: 22px; font-weight: 700; margin: 0 0 24px;">Want to Talk Through Your Brief?</h2>
+
+    <p style="font-size: 16px; line-height: 1.6;">${Leads.First Name},</p>
+
+    <p style="font-size: 16px; line-height: 1.6;">
+      I've shared a few frameworks over the past week. If any of them resonated — or if you're
+      looking at your Leverage Brief and wondering "where do I actually start?" — let's talk.
+    </p>
+
+    <p style="font-size: 16px; line-height: 1.6;">
+      I'm offering a <strong>complimentary 30-minute Fulcrum Intro Call</strong> where we'll:
+    </p>
+
+    <ul style="font-size: 15px; line-height: 1.8; color: #333; padding-left: 20px;">
+      <li>Review your Strategic Gap Score (${Leads.Strategic_Gap_Score}/10) and what it means practically</li>
+      <li>Identify the ONE move that would have the biggest impact on ${Leads.Company} this quarter</li>
+      <li>Give you a clear next step you can take that same week</li>
+    </ul>
+
+    <p style="font-size: 16px; line-height: 1.6;">
+      No pitch. Just a useful conversation.
+    </p>
+
+    <!-- CTA -->
+    <div style="text-align: center; margin: 32px 0;">
+      <a href="https://fulcrumcollective.io/book" style="display: inline-block; background: #27E7FE; color: #000000; font-weight: 700; padding: 14px 36px; border-radius: 8px; text-decoration: none; font-size: 16px;">
+        Book a Fulcrum Intro Call &rarr;
+      </a>
+    </div>
+
+    <p style="font-size: 14px; color: #666; text-align: center;">
+      Or reply to this email with a time that works for you.
+    </p>
+
+    <div style="margin-top: 32px; padding-top: 16px; border-top: 1px solid #e0ddd8;">
+      <p style="font-size: 11px; color: #aaa;">
+        Fulcrum Collective &middot; Exponent Group &middot;
+        <a href="${organization.unsubscribe_link}" style="color: #aaa;">Unsubscribe</a>
+      </p>
+    </div>
+
+  </div>
+</body>
+</html>
