@@ -11,19 +11,34 @@ interface Step1Props {
 export function Step1Identity({ answers, onUpdate }: Step1Props) {
   return (
     <div className="space-y-5">
-      {/* Name */}
-      <div>
-        <label htmlFor="name" className="block text-sm font-semibold mb-1.5">
-          Full Name
-        </label>
-        <input
-          id="name"
-          type="text"
-          placeholder="Jane Smith"
-          value={(answers.name as string) || ""}
-          onChange={(e) => onUpdate("name", e.target.value)}
-          className="w-full px-4 py-3 rounded-lg border border-black/15 bg-white text-black placeholder:text-black/30 focus:outline-none focus:ring-2 focus:ring-[#27E7FE] transition-shadow"
-        />
+      {/* First Name + Last Name */}
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label htmlFor="first_name" className="block text-sm font-semibold mb-1.5">
+            First Name
+          </label>
+          <input
+            id="first_name"
+            type="text"
+            placeholder="Jane"
+            value={(answers.first_name as string) || ""}
+            onChange={(e) => onUpdate("first_name", e.target.value)}
+            className="w-full px-4 py-3 rounded-lg border border-black/15 bg-white text-black placeholder:text-black/30 focus:outline-none focus:ring-2 focus:ring-[#27E7FE] transition-shadow"
+          />
+        </div>
+        <div>
+          <label htmlFor="last_name" className="block text-sm font-semibold mb-1.5">
+            Last Name
+          </label>
+          <input
+            id="last_name"
+            type="text"
+            placeholder="Smith"
+            value={(answers.last_name as string) || ""}
+            onChange={(e) => onUpdate("last_name", e.target.value)}
+            className="w-full px-4 py-3 rounded-lg border border-black/15 bg-white text-black placeholder:text-black/30 focus:outline-none focus:ring-2 focus:ring-[#27E7FE] transition-shadow"
+          />
+        </div>
       </div>
 
       {/* Email */}
@@ -99,9 +114,14 @@ export function Step1Identity({ answers, onUpdate }: Step1Props) {
           className="text-sm text-black/70 leading-snug cursor-pointer"
         >
           I agree to the{" "}
-          <span className="underline font-medium text-black">
+          <a
+            href="https://www.fulcrumcollective.io/privacy"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline font-medium text-black hover:text-black/70"
+          >
             Fulcrum Privacy Policy
-          </span>{" "}
+          </a>{" "}
           and consent to an AI-assisted strategic analysis of my business data.{" "}
           <span className="text-red-500">*</span>
         </label>

@@ -152,7 +152,8 @@ export function AssessmentModal({
     try {
       await postSigned(ENDPOINTS.ASSESS_PARTIAL, {
         email: answers.email,
-        name: answers.name || "",
+        first_name: answers.first_name || "",
+        last_name: answers.last_name || "",
         company_name: answers.company_name || "",
         company_url: answers.company_url || "",
         partial_progress_step: currentStep,

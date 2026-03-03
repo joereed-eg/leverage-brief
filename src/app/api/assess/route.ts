@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { verifyRequest } from "@/lib/verify-hmac";
+import { sendConfirmationEmail } from "@/lib/email";
 
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_ASSESS_FULL;
 
@@ -11,6 +12,15 @@ export async function POST(request: Request) {
     if (body.confirm_email_address) {
       return NextResponse.json({ ok: true });
     }
+
+    // Send immediate confirmation email via Resend (fire-and-forget)
+    const email = body.email as string;
+    const firstName = (body.first_name as string) || "";
+    const companyName = (body.company_name as string) || "your company";
+
+    sendConfirmationEmail(email, firstName, companyName).catch((err) =>
+      console.error("Confirmation email failed:", err)
+    );
 
     // Forward to n8n webhook
     if (!N8N_WEBHOOK_URL) {

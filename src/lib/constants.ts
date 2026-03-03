@@ -15,7 +15,7 @@ export const STORAGE_KEYS = {
 
 // Modal Steps
 export const STEP_LABELS = [
-  "Lead Identity",
+  "Contact Information",
   "Operational Foundation",
   "Strategic North Star",
   "Market & ICP",
