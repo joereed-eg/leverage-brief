@@ -71,9 +71,11 @@ export async function POST(request: Request) {
     if (browser) {
       await browser.close().catch(() => {});
     }
-    console.error("PDF generation failed:", err);
+    const message = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack : undefined;
+    console.error("PDF generation failed:", message, stack);
     return NextResponse.json(
-      { error: "PDF generation failed" },
+      { error: "PDF generation failed", detail: message },
       { status: 500 }
     );
   }
