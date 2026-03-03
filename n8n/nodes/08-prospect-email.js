@@ -116,7 +116,7 @@ const HtmlBody = `
     <!-- Footer -->
     <div style="margin-top: 32px; padding-top: 16px; border-top: 1px solid #e0ddd8;">
       <p style="font-size: 11px; color: #aaa; margin: 0;">
-        Fulcrum by Exponent Group &middot;
+        Fulcrum Collective &middot;
         <a href="#" style="color: #aaa;">Unsubscribe</a> &middot;
         <a href="#" style="color: #aaa;">Privacy Policy</a>
       </p>
@@ -144,7 +144,7 @@ Book a Fulcrum Strategy Session: ${bookingUrl}
 
 ---
 Questions? Reply to this email.
-Fulcrum by Exponent Group`;
+Fulcrum Collective`;
 
 // --- Build Postmark payload with PDF attachment ---
 const pdfBase64 = data.pdf_base64 || '';

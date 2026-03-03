@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { verifyRequest } from "@/lib/verify-hmac";
-import { sendConfirmationEmail } from "@/lib/email";
+import { sendConfirmationEmail, sendAdminNotification } from "@/lib/email";
 
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_ASSESS_FULL;
 
@@ -20,6 +20,11 @@ export async function POST(request: Request) {
 
     sendConfirmationEmail(email, firstName, companyName).catch((err) =>
       console.error("Confirmation email failed:", err)
+    );
+
+    // Send admin notification with all lead details (fire-and-forget)
+    sendAdminNotification(body as Record<string, unknown>).catch((err) =>
+      console.error("Admin notification failed:", err)
     );
 
     // Forward to n8n webhook

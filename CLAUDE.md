@@ -1,7 +1,7 @@
 # Leverage Brief — Fulcrum Engine v5.3
 
 ## Project Overview
-Lead capture + AI diagnostic pipeline for Fulcrum/Exponent Group.
+Lead capture + AI diagnostic pipeline for Fulcrum Collective.
 5-step progressive modal → n8n backend → enrichment → AI synthesis → PDF delivery.
 
 ## Tech Stack

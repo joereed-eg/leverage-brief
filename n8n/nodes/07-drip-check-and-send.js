@@ -169,7 +169,7 @@ function buildEmail2Html(name, company, url) {
       <strong>Need help?</strong> Reply to this email and our team will assist you.
     </p>
     <p style="font-size: 13px; color: #999; margin-top: 24px;">
-      Fulcrum by Exponent Group &middot; <a href="#" style="color: #999;">Unsubscribe</a>
+      Fulcrum Collective &middot; <a href="#" style="color: #999;">Unsubscribe</a>
     </p>
   </div>
 </body>
@@ -188,7 +188,7 @@ Resume My Assessment: ${url}
 Need help? Reply to this email and our team will assist you.
 
 —
-Fulcrum by Exponent Group`;
+Fulcrum Collective`;
 }
 
 function buildEmail3Html(name, company, url) {
@@ -215,7 +215,7 @@ function buildEmail3Html(name, company, url) {
       <strong>Questions?</strong> Reply to this email — our team reads every response.
     </p>
     <p style="font-size: 13px; color: #999; margin-top: 24px;">
-      Fulcrum by Exponent Group &middot; <a href="#" style="color: #999;">Unsubscribe</a>
+      Fulcrum Collective &middot; <a href="#" style="color: #999;">Unsubscribe</a>
     </p>
   </div>
 </body>
@@ -234,5 +234,5 @@ Complete My Assessment: ${url}
 Questions? Reply to this email — our team reads every response.
 
 —
-Fulcrum by Exponent Group`;
+Fulcrum Collective`;
 }

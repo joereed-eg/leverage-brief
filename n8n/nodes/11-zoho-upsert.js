@@ -3,36 +3,17 @@
  *
  * Maps all assessment data to Zoho CRM Lead fields.
  * Handles both new leads and updates to existing partial records.
- * Zoho handles ALL email sending via Workflow Rules + Cadences.
+ * Resend handles immediate emails; Zoho handles nurture cadences.
  *
  * Input:  Full pipeline payload (after synthesis + PDF storage)
  * Output: Zoho CRM API payload ready for the Zoho HTTP Request node
- *
- * Zoho Custom Fields Required:
- *   - Strategic_Gap_Score (Decimal)
- *   - Lead_Interest_Summary (Multi-line)
- *   - Gatekeeper_Path (Picklist: PREMIUM/LITE)
- *   - Strategic_Path (Picklist: VALIDATE/CLARIFY/BUILD)
- *   - partial_status (Picklist: in_progress/completed/abandoned)
- *   - resume_id (Single-line)
- *   - Resume_URL (URL)
- *   - PDF_Download_URL (URL)
- *   - PDF_Generated_At (DateTime)
- *   - Partial_Data_Blob (Multi-line)
- *   - Fulcrum_Stop_Auto (Checkbox)
- *   - Sunday_Dread (Single-line)
- *   - Fulcrum_Priorities (Multi-line)
- *   - consent_timestamp (DateTime)
- *   - consent_ip_address (Single-line)
- *   - consent_version (Single-line)
  */
 
 const data = $input.first().json;
 
-const name = data.name || '';
-const nameParts = name.split(' ');
-const firstName = nameParts[0] || '';
-const lastName = nameParts.slice(1).join(' ') || firstName;
+// Name — form now collects first/last separately
+const firstName = data.first_name || '';
+const lastName = data.last_name || firstName;
 
 const email = data.email || '';
 const companyName = data.company_name || '';
@@ -50,10 +31,40 @@ const strategicGapScore = data.strategic_gap_score || 0;
 const gatekeeperPath = data.gatekeeper_path || 'LITE';
 const strategicPath = data.strategic_path || 'CLARIFY';
 
-// Key strategic data
-const biggestBet = data.biggest_strategic_bet || '';
+// Operational (Step 2)
+const vacationTest = data.vacation_test || '';
+const interruptionFrequency = data.interruption_frequency || '';
 const sundayDread = data.sunday_dread || '';
+const decisionBottleneck = data.decision_bottleneck || '';
+
+// Strategic (Step 3)
+const threeYearTarget = data.three_year_target || '';
+const biggestBet = data.biggest_strategic_bet || '';
+const teamConfidence = data.team_confidence || '';
+const revenueGoalGap = data.revenue_goal_gap || '';
+
+// Market & ICP (Step 4)
+const currentClientBase = data.current_client_base || '';
+const icpDescription = data.icp_description || '';
+const topCompetitor = data.top_competitor || '';
+const competitorUrls = [
+  data.top_competitor,
+  data.competitor_url_2,
+  data.competitor_url_3,
+  data.competitor_url_4,
+  data.competitor_url_5,
+].filter(Boolean);
+const clientUrls = [
+  data.client_url_1,
+  data.client_url_2,
+  data.client_url_3,
+].filter(Boolean);
+const winRate = data.win_rate || '';
+
+// Execution (Step 5)
 const fulcrumPriorities = data.fulcrum_priorities || '';
+const monthlyFocus = data.monthly_focus || '';
+const biggestObstacle = data.biggest_obstacle || '';
 
 // Resume & PDF
 const resumeId = data.resume_id || '';
@@ -94,7 +105,7 @@ const zohoRecord = {
   Sunday_Dread: sundayDread,
   Fulcrum_Priorities: fulcrumPriorities,
   partial_status: 'completed',
-  Fulcrum_Stop_Auto: false,
+  Assessment_Tier: gatekeeperPath,
 
   // Custom fields — Resume & PDF
   resume_id: resumeId,
@@ -107,17 +118,38 @@ const zohoRecord = {
   consent_ip_address: consentIp,
   consent_version: consentVersion,
 
-  // Description — composite summary for quick CRM scan
+  // Description — full assessment dump for quick CRM scan
   Description: [
     `=== FULCRUM ASSESSMENT COMPLETE ===`,
     `Strategic Gap Score: ${strategicGapScore}/10`,
     `Gatekeeper Path: ${gatekeeperPath}`,
     `Strategic Path: ${strategicPath}`,
     ``,
+    `--- OPERATIONAL ---`,
+    `Vacation Test: ${vacationTest}`,
+    `Interruption Frequency: ${interruptionFrequency}`,
     `Sunday Dread: ${sundayDread}`,
-    `Biggest Strategic Bet: ${biggestBet}`,
-    `Fulcrum Priorities: ${fulcrumPriorities}`,
+    `Decision Bottleneck: ${decisionBottleneck}`,
     ``,
+    `--- STRATEGIC ---`,
+    `3-Year Target: ${threeYearTarget}`,
+    `Biggest Strategic Bet: ${biggestBet}`,
+    `Team Confidence: ${teamConfidence}`,
+    `Revenue Goal Gap: ${revenueGoalGap}`,
+    ``,
+    `--- MARKET & ICP ---`,
+    `Client Base: ${currentClientBase}`,
+    `ICP: ${icpDescription}`,
+    `Competitors: ${competitorUrls.join(', ') || 'None provided'}`,
+    `Client URLs: ${clientUrls.join(', ') || 'None provided'}`,
+    `Win Rate: ${winRate}`,
+    ``,
+    `--- EXECUTION ---`,
+    `Fulcrum Priorities: ${fulcrumPriorities}`,
+    `Monthly Focus: ${monthlyFocus}`,
+    `Biggest Obstacle: ${biggestObstacle}`,
+    ``,
+    `--- ENRICHMENT ---`,
     `Industry: ${industry}`,
     `Headcount: ${headcount}`,
     `Annual Revenue: $${annualRevenue ? annualRevenue.toLocaleString() : 'N/A'}`,

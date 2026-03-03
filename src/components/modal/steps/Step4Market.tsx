@@ -58,22 +58,63 @@ export function Step4Market({ answers, onUpdate }: Step4Props) {
         />
       </div>
 
-      {/* Top Competitor */}
+      {/* Competitor URLs */}
       <div>
-        <label
-          htmlFor="top_competitor"
-          className="block text-sm font-semibold mb-1.5"
-        >
-          Who is your #1 competitor and why do clients choose them over you?
+        <label className="block text-sm font-semibold mb-1.5">
+          Paste the website URLs of your top competitors (up to 5)
         </label>
-        <textarea
-          id="top_competitor"
-          rows={3}
-          placeholder="Competitor name and what they do differently..."
-          value={(answers.top_competitor as string) || ""}
-          onChange={(e) => onUpdate("top_competitor", e.target.value)}
-          className="w-full px-4 py-3 rounded-lg border border-black/15 bg-white text-black placeholder:text-black/30 focus:outline-none focus:ring-2 focus:ring-[#27E7FE] transition-shadow resize-none"
-        />
+        {[0, 1, 2, 3, 4].map((i) => {
+          const key = i === 0 ? "top_competitor" : `competitor_url_${i + 1}`;
+          const currentVal = (answers[key] as string) || "";
+          const prevKey = i === 0 ? null : i === 1 ? "top_competitor" : `competitor_url_${i}`;
+          const prevFilled = i === 0 || !!((answers[prevKey!] as string) || "").trim();
+
+          if (i > 0 && !prevFilled) return null;
+
+          return (
+            <input
+              key={key}
+              id={key}
+              type="url"
+              placeholder={i === 0 ? "https://competitor.com" : "https://another-competitor.com"}
+              value={currentVal}
+              onChange={(e) => onUpdate(key, e.target.value)}
+              className="w-full px-4 py-3 rounded-lg border border-black/15 bg-white text-black placeholder:text-black/30 focus:outline-none focus:ring-2 focus:ring-[#27E7FE] transition-shadow mb-2"
+            />
+          );
+        })}
+      </div>
+
+      {/* Client URLs (optional) */}
+      <div>
+        <label className="block text-sm font-semibold mb-1">
+          Share your top client websites{" "}
+          <span className="font-normal text-black/40">(optional)</span>
+        </label>
+        <p className="text-xs text-black/40 mb-2">
+          Used for assessment purposes only — helps us understand your market positioning.
+        </p>
+        {[0, 1, 2].map((i) => {
+          const key = `client_url_${i + 1}`;
+          const currentVal = (answers[key] as string) || "";
+          const prevKey = i === 0 ? null : `client_url_${i}`;
+          const prevFilled =
+            i === 0 || !!((answers[prevKey!] as string) || "").trim();
+
+          if (i > 0 && !prevFilled) return null;
+
+          return (
+            <input
+              key={key}
+              id={key}
+              type="url"
+              placeholder="https://client-website.com"
+              value={currentVal}
+              onChange={(e) => onUpdate(key, e.target.value)}
+              className="w-full px-4 py-3 rounded-lg border border-black/15 bg-white text-black placeholder:text-black/30 focus:outline-none focus:ring-2 focus:ring-[#27E7FE] transition-shadow mb-2"
+            />
+          );
+        })}
       </div>
 
       {/* Win Rate */}

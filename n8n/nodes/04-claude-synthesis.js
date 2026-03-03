@@ -144,7 +144,7 @@ Action selection priority:
 
 ## Next Step
 
-Single CTA paragraph. Invite them to a Fulcrum Strategy Session with Exponent Group to build their full Fulcrum Execution Framework. Tone: confident, not salesy. Frame it as the natural next step for leaders who want to turn this brief into a 90-day execution plan.
+Single CTA paragraph. Invite them to a Fulcrum Strategy Session with Fulcrum Collective to build their full Fulcrum Execution Framework. Tone: confident, not salesy. Frame it as the natural next step for leaders who want to turn this brief into a 90-day execution plan.
 
 ═══════════════════════════════════════════════
 BRAND MOAT — ABSOLUTE RULES

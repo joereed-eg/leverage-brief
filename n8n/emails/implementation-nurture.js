@@ -86,10 +86,10 @@ const premiumEmails = [
         <li>They identified their single highest-leverage priority</li>
         <li>They built a Fulcrum Rhythm Meeting cadence that keeps the team aligned</li>
       </ul>
-      <p>Exponent Group helps leaders like you implement the Fulcrum Method — from your first priority through full strategic architecture.</p>
+      <p>Fulcrum Collective helps leaders like you implement the Fulcrum Method — from your first priority through full strategic architecture.</p>
       ${ctaButton('Book a Fulcrum Strategy Session', bookingUrl)}
     `),
-    buildText: () => `You're not alone in this, ${firstName}\n\nLeaders are using the Fulcrum Strategic Architecture to transform execution.\n\nExponent Group helps leaders implement the Fulcrum Method.\n\nBook a Strategy Session: ${bookingUrl}`,
+    buildText: () => `You're not alone in this, ${firstName}\n\nLeaders are using the Fulcrum Strategic Architecture to transform execution.\n\nFulcrum Collective helps leaders implement the Fulcrum Method.\n\nBook a Strategy Session: ${bookingUrl}`,
   },
   // Email 5 — Day 10: Final CTA
   {
@@ -170,7 +170,7 @@ function wrapHtml(content) {
     ${content}
     <hr style="border: none; border-top: 1px solid #e0ddd8; margin: 32px 0;" />
     <p style="font-size: 13px; color: #999;">
-      Fulcrum by Exponent Group &middot; <a href="#" style="color: #999;">Unsubscribe</a>
+      Fulcrum Collective &middot; <a href="#" style="color: #999;">Unsubscribe</a>
     </p>
   </div>
 </body>

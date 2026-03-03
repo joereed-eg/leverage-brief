@@ -385,8 +385,8 @@ export function generatePdfHtml(data: PdfData): string {
   ${briefHtml}
 
   <div class="report-footer">
-    <span>Leverage Brief &middot; Fulcrum by Exponent Group</span>
-    <span>&copy; ${year} Exponent Group. Confidential.</span>
+    <span>Leverage Brief &middot; Fulcrum Collective</span>
+    <span>&copy; ${year} Fulcrum Collective. Confidential.</span>
   </div>
 </div>
 

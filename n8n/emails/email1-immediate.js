@@ -36,7 +36,7 @@ const HtmlBody = `
       <strong>Need help?</strong> Reply to this email and our team will assist you.
     </p>
     <p style="font-size: 13px; color: #999; margin-top: 24px;">
-      Fulcrum by Exponent Group &middot; <a href="#" style="color: #999;">Unsubscribe</a>
+      Fulcrum Collective &middot; <a href="#" style="color: #999;">Unsubscribe</a>
     </p>
   </div>
 </body>
@@ -53,7 +53,7 @@ Continue My Assessment: ${resumeUrl}
 Need help? Reply to this email and our team will assist you.
 
 —
-Fulcrum by Exponent Group`;
+Fulcrum Collective`;
 
 return [{
   json: {

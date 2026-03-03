@@ -15,6 +15,18 @@ const companyUrl = $input.first().json.company_url || '';
 const industry = $input.first().json.enrichment?.industry || 'Unknown';
 const icpDescription = $input.first().json.icp_description || '';
 const topCompetitor = $input.first().json.top_competitor || '';
+const allCompetitors = [
+  $input.first().json.top_competitor,
+  $input.first().json.competitor_url_2,
+  $input.first().json.competitor_url_3,
+  $input.first().json.competitor_url_4,
+  $input.first().json.competitor_url_5,
+].filter(Boolean);
+const clientUrls = [
+  $input.first().json.client_url_1,
+  $input.first().json.client_url_2,
+  $input.first().json.client_url_3,
+].filter(Boolean);
 const biggestBet = $input.first().json.biggest_strategic_bet || '';
 
 // Build research queries
@@ -25,7 +37,7 @@ const queries = [
   },
   {
     key: 'competitive_landscape',
-    prompt: `Analyze the competitive landscape for ${companyName} in the ${industry} industry. Their main competitor is ${topCompetitor || 'unknown'}. What are the key differentiators and market dynamics?`,
+    prompt: `Analyze the competitive landscape for ${companyName} in the ${industry} industry. Their competitors include: ${allCompetitors.length > 0 ? allCompetitors.join(', ') : 'unknown'}. What are the key differentiators and market dynamics?`,
   },
   {
     key: 'icp_gap_analysis',
