@@ -1,0 +1,568 @@
+{
+  "name": "Leverage Brief — Partial Capture + Drip Emails",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fulcrum-assess-partial",
+        "responseMode": "responseNode",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "webhook-partial",
+      "name": "Webhook: Partial Save",
+      "type": "n8n-nodes-base.webhook",
+      "position": [
+        200,
+        300
+      ],
+      "typeVersion": 2,
+      "webhookId": "fulcrum-assess-partial"
+    },
+    {
+      "parameters": {
+        "functionCode": "/**\n * n8n Function Node: Partial Save Handler\n *\n * Receives partial payload from /fulcrum-assess-partial webhook.\n * Generates UUID resume_id, stores in workflowStaticData,\n * and prepares Zoho upsert + Resend resume email payloads.\n *\n * Features:\n *   - UUID v4 generation with collision check\n *   - Dedup by email (updates existing record, preserves resume_id)\n *   - Stores form_state as stringified JSON for Zoho Partial_Data_Blob\n *   - Accepts first_name/last_name separately (form sends these)\n *   - Falls back to splitting `name` if needed\n *\n * Input:  Partial payload with email, first_name, last_name, company_name, form_state, partial_progress_step\n * Output: Payload with resume_id, Zoho API body, and email trigger data\n */\n\n// Generate UUID v4 with collision guard\nfunction uuidv4(existingKeys) {\n  let id;\n  let attempts = 0;\n  do {\n    id = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {\n      const r = Math.random() * 16 | 0;\n      const v = c === 'x' ? r : (r & 0x3 | 0x8);\n      return v.toString(16);\n    });\n    attempts++;\n  } while (existingKeys.has(id) && attempts < 10);\n  return id;\n}\n\nconst input = $input.first().json;\nconst email = input.email || '';\nconst companyName = input.company_name || '';\nconst companyUrl = input.company_url || '';\nconst partialStep = input.partial_progress_step || 1;\nconst formState = input.form_state || {};\nconst referrerUrl = input.referrer_url || '';\nconst browserMetadata = input.browser_metadata || {};\nconst clientIp = input.client_ip || '';\n\n// Name handling — form now sends first_name/last_name separately\nlet firstName = input.first_name || '';\nlet lastName = input.last_name || '';\n\n// Fallback: split `name` if first/last not provided\nif (!firstName && input.name) {\n  const parts = input.name.split(' ');\n  firstName = parts[0] || '';\n  lastName = parts.slice(1).join(' ') || '';\n}\nif (!lastName) lastName = firstName;\n\n// Validate email\nif (!email || !email.includes('@')) {\n  return [{\n    json: {\n      error: 'Valid email is required for Save for Later',\n      statusCode: 400,\n    }\n  }];\n}\n\n// --- Static data store ---\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.partial_records) {\n  staticData.partial_records = {};\n}\n\nconst existingKeys = new Set(Object.keys(staticData.partial_records));\n\n// --- Dedup: check for existing record by email ---\nlet resumeId;\nlet isNewRecord = true;\nconst existingEntry = Object.entries(staticData.partial_records).find(\n  ([, record]) => record.email === email && record.partial_status === 'in_progress'\n);\n\nif (existingEntry) {\n  // Update existing record — preserve UUID\n  isNewRecord = false;\n  resumeId = existingEntry[0];\n  staticData.partial_records[resumeId] = {\n    ...staticData.partial_records[resumeId],\n    first_name: firstName,\n    last_name: lastName,\n    company_name: companyName,\n    company_url: companyUrl,\n    form_state: formState,\n    partial_progress_step: partialStep,\n    updated_at: new Date().toISOString(),\n    save_count: (staticData.partial_records[resumeId].save_count || 1) + 1,\n  };\n} else {\n  // Create new record\n  resumeId = uuidv4(existingKeys);\n  staticData.partial_records[resumeId] = {\n    email,\n    first_name: firstName,\n    last_name: lastName,\n    company_name: companyName,\n    company_url: companyUrl,\n    form_state: formState,\n    partial_progress_step: partialStep,\n    partial_status: 'in_progress',\n    created_at: new Date().toISOString(),\n    updated_at: new Date().toISOString(),\n    drip_emails_sent: 0,\n    save_count: 1,\n    referrer_url: referrerUrl,\n    client_ip: clientIp,\n    browser_metadata: browserMetadata,\n  };\n}\n\nconst APP_URL = $env.APP_URL || 'https://leverage.fulcrumcollective.io';\nconst resumeUrl = `${APP_URL}?resume_id=${resumeId}`;\n\n// --- Zoho CRM API body (for HTTP Request node) ---\nconst zohoApiBody = {\n  data: [{\n    Last_Name: lastName,\n    First_Name: firstName,\n    Email: email,\n    Company: companyName,\n    Website: companyUrl,\n    Lead_Source: 'Fulcrum_Tool',\n    Tag: [\n      { name: 'Fulcrum' },\n      { name: 'Fulcrum_Partial_Submissio' },\n    ],\n    partial_status: 'in_progress',\n    resume_id: resumeId,\n    Partial_Data_Blob: JSON.stringify(formState),\n  }],\n  duplicate_check_fields: ['Email'],\n};\n\nreturn [{\n  json: {\n    // Core fields\n    resume_id: resumeId,\n    resume_url: resumeUrl,\n    email,\n    first_name: firstName,\n    last_name: lastName,\n    company_name: companyName,\n    company_url: companyUrl,\n    partial_progress_step: partialStep,\n    form_state: formState,\n    form_state_stringified: JSON.stringify(formState),\n    partial_status: 'in_progress',\n    is_new_record: isNewRecord,\n\n    // Zoho API payload\n    zoho_api_body: zohoApiBody,\n\n    // Drip control — only send immediate email for new records\n    trigger_drip: {\n      send_immediate: isNewRecord,\n      email_1_subject: `Your Fulcrum Assessment is saved, ${firstName || 'there'}`,\n    },\n  }\n}];\n"
+      },
+      "id": "partial-save",
+      "name": "01 — Partial Save + UUID",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        420,
+        300
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "/**\n * n8n Function Node: Zoho OAuth2 Token Refresh\n *\n * Manages Zoho access token lifecycle:\n *   - Checks if current token is still valid (cached in static data)\n *   - If expired or missing, refreshes using ZOHO_REFRESH_TOKEN\n *   - Returns valid access_token for downstream Zoho API calls\n *\n * Usage: Place before any Zoho HTTP Request node.\n *        Downstream nodes reference: {{ $json.zoho_access_token }}\n *\n * Input:  Any (pass-through)\n * Output: Same data + zoho_access_token\n */\n\nconst staticData = $getWorkflowStaticData('global');\nconst now = Date.now();\n\n// Check cached token\nconst tokenExpiry = staticData.zoho_token_expiry || 0;\nconst cachedToken = staticData.zoho_access_token || '';\n\nif (cachedToken && now < tokenExpiry) {\n  // Token still valid — pass through\n  return [{\n    json: {\n      ...$input.first().json,\n      zoho_access_token: cachedToken,\n    }\n  }];\n}\n\n// --- Refresh token ---\ntry {\n  const response = await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'https://accounts.zoho.com/oauth/v2/token',\n    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n    body: new URLSearchParams({\n      grant_type: 'refresh_token',\n      client_id: $env.ZOHO_CLIENT_ID,\n      client_secret: $env.ZOHO_CLIENT_SECRET,\n      refresh_token: $env.ZOHO_REFRESH_TOKEN,\n    }).toString(),\n    timeout: 10000,\n  });\n\n  if (!response.access_token) {\n    throw new Error(`Zoho token refresh failed: ${JSON.stringify(response)}`);\n  }\n\n  // Cache token — Zoho tokens last 1 hour, refresh 5 min early\n  staticData.zoho_access_token = response.access_token;\n  staticData.zoho_token_expiry = now + ((response.expires_in || 3600) - 300) * 1000;\n\n  return [{\n    json: {\n      ...$input.first().json,\n      zoho_access_token: response.access_token,\n    }\n  }];\n\n} catch (err) {\n  console.log('Zoho token refresh failed:', err.message);\n\n  // Return error flag — downstream nodes should check this\n  return [{\n    json: {\n      ...$input.first().json,\n      zoho_access_token: null,\n      zoho_auth_error: err.message,\n    }\n  }];\n}\n"
+      },
+      "id": "zoho-auth-partial",
+      "name": "02 — Zoho Auth Refresh",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        640,
+        300
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.zohoapis.com/crm/v2/Leads/upsert",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Zoho-oauthtoken {{ $json.zoho_access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.zoho_api_body) }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "zoho-partial-upsert",
+      "name": "03 — Zoho Partial Upsert",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        860,
+        300
+      ],
+      "typeVersion": 4,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, resume_id: $('01 — Partial Save + UUID').first().json.resume_id }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-partial",
+      "name": "Respond: Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [
+        1080,
+        240
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('01 — Partial Save + UUID').first().json.trigger_drip.send_immediate }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-send-email1",
+      "name": "IF: New Record? Send Email 1",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        1080,
+        380
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "/**\n * n8n Function Node: Drip Email 1 — Immediate (sent right after partial save)\n *\n * Input:  Output from 05-partial-save with resume_url, first_name, company_name, step\n * Output: Resend email payload\n */\n\nconst crypto = require('crypto');\n\nconst data = $input.first().json;\nconst firstName = data.first_name || (data.name || '').split(' ')[0] || 'there';\nconst companyName = data.company_name || 'your company';\nconst resumeUrl = data.resume_url || '';\nconst step = data.partial_progress_step || 1;\nconst email = data.email || '';\n\nconst FROM_EMAIL = $env.RESEND_FROM_EMAIL || 'joe@fulcrumcollective.io';\nconst APP_URL = $env.APP_URL || 'https://leverage.fulcrumcollective.io';\nconst HMAC_SECRET = $env.HMAC_SECRET || 'fulcrum-dev-secret';\n\n// --- Unsubscribe link ---\nconst unsubToken = crypto\n  .createHmac('sha256', HMAC_SECRET)\n  .update(email.toLowerCase())\n  .digest('hex')\n  .substring(0, 16);\nconst unsubUrl = `${APP_URL}/api/drip/stop?email=${encodeURIComponent(email)}&token=${unsubToken}`;\n\nconst html = `<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"></head>\n<body style=\"font-family: Arial, Helvetica, sans-serif; background: #F7F5F2; color: #000; padding: 40px 20px;\">\n  <div style=\"max-width: 560px; margin: 0 auto;\">\n    <div style=\"margin-bottom: 24px;\">\n      <a href=\"https://www.fulcrumcollective.io\"><img src=\"https://fulcrumcollective.io/wp-content/uploads/2026/03/Fulcrum-Logo.png\" alt=\"Fulcrum Collective\" width=\"120\" style=\"width: 120px; height: auto;\" /></a>\n    </div>\n    <h2 style=\"font-size: 22px; margin-bottom: 16px;\">Your progress is saved, ${firstName}</h2>\n    <p style=\"font-size: 16px; line-height: 1.6; color: #333;\">\n      You made it to <strong>Step ${step} of 5</strong> on the Leverage Brief assessment for\n      <strong>${companyName}</strong>. Your answers are saved — pick up right where you left off.\n    </p>\n    <p style=\"font-size: 16px; line-height: 1.6; color: #333;\">\n      Complete the remaining steps to receive your personalized Leverage Brief with\n      strategic priorities tailored to your business.\n    </p>\n    <div style=\"text-align: center; margin: 32px 0;\">\n      <a href=\"${resumeUrl}\" style=\"display: inline-block; background: #27E7FE; color: #000; font-weight: 600; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px;\">\n        Continue My Assessment &rarr;\n      </a>\n    </div>\n    <p style=\"font-size: 14px; color: #666;\">\n      <strong>Need help?</strong> Reply to this email and our team will assist you.\n    </p>\n    <div style=\"margin-top: 32px; padding-top: 16px; border-top: 1px solid #e0ddd8;\">\n      <p style=\"font-size: 11px; color: #aaa;\">\n        Fulcrum Collective &middot;\n        <a href=\"${unsubUrl}\" style=\"color: #aaa;\">Unsubscribe</a>\n      </p>\n    </div>\n  </div>\n</body>\n</html>`;\n\nreturn [{\n  json: {\n    resend_payload: {\n      from: FROM_EMAIL,\n      to: email,\n      reply_to: 'joe@fulcrumcollective.io',\n      subject: `Your Fulcrum Assessment is saved, ${firstName}`,\n      html,\n    },\n    // Pass through original data\n    ...data,\n  }\n}];\n"
+      },
+      "id": "email1-build",
+      "name": "04 — Build Email 1 (Save Confirmation)",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        1300,
+        380
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.RESEND_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.resend_payload) }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "resend-email1",
+      "name": "Resend: Email 1",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        1520,
+        380
+      ],
+      "typeVersion": 4,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.statusCode }}",
+              "value2": 401
+            }
+          ]
+        }
+      },
+      "id": "if-zoho-401",
+      "name": "IF: Zoho 401?",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        1080,
+        520
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "// Force token refresh by clearing cache\nconst staticData = $getWorkflowStaticData('global');\nstaticData.zoho_access_token = null;\nstaticData.zoho_token_expiry = 0;\nconsole.log('Zoho 401 — forced token refresh for next run');\nreturn [{ json: { ...$input.first().json, zoho_retry_needed: true } }];"
+      },
+      "id": "zoho-force-refresh",
+      "name": "Force Token Refresh",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        1300,
+        520
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "get-partial-data",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-get-partial",
+      "name": "Webhook: Get Partial Data",
+      "type": "n8n-nodes-base.webhook",
+      "position": [
+        200,
+        700
+      ],
+      "typeVersion": 2,
+      "webhookId": "get-partial-data"
+    },
+    {
+      "parameters": {
+        "functionCode": "/**\n * n8n Function Node: Get Partial Data (Resume Retrieval)\n *\n * Receives GET request with resume_id query param.\n * Looks up stored partial record and returns form_state + step.\n *\n * Input:  Query param resume_id\n * Output: { form_state, partial_progress_step } or 404\n */\n\nconst resumeId = $input.first().json.query?.resume_id\n  || $input.first().json.resume_id\n  || '';\n\nif (!resumeId) {\n  return [{\n    json: {\n      error: 'resume_id is required',\n      statusCode: 400,\n    }\n  }];\n}\n\nconst staticData = $getWorkflowStaticData('global');\nconst partialRecords = staticData.partial_records || {};\nconst record = partialRecords[resumeId];\n\nif (!record) {\n  return [{\n    json: {\n      error: 'Resume session not found or expired',\n      statusCode: 404,\n    }\n  }];\n}\n\n// Don't return completed records for resume\nif (record.partial_status === 'completed') {\n  return [{\n    json: {\n      error: 'This assessment has already been completed',\n      statusCode: 410,\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    resume_id: resumeId,\n    form_state: record.form_state,\n    partial_progress_step: record.partial_progress_step,\n    email: record.email,\n    name: record.name,\n    company_name: record.company_name,\n  }\n}];\n"
+      },
+      "id": "get-partial-data",
+      "name": "05 — Get Partial Data",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        420,
+        700
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fulcrum-drip-stop",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-drip-stop",
+      "name": "Webhook: Drip Stop",
+      "type": "n8n-nodes-base.webhook",
+      "position": [
+        200,
+        900
+      ],
+      "typeVersion": 2,
+      "webhookId": "fulcrum-drip-stop"
+    },
+    {
+      "parameters": {
+        "functionCode": "/**\n * n8n Function Node: Drip Stop Handler\n *\n * Receives webhook from Next.js /api/drip/stop endpoint\n * when a lead clicks the unsubscribe link in a drip email.\n *\n * Adds the email to the stopped_emails list in static data.\n * Both the drip check (07) and nurture check (12) reference this list.\n *\n * Input:  { email: string, action: 'stop_drip', stopped_at: string }\n * Output: { ok: true, email, stopped: true }\n */\n\nconst data = $input.first().json;\nconst email = (data.email || '').toLowerCase();\n\nif (!email) {\n  return [{ json: { error: 'No email provided', statusCode: 400 } }];\n}\n\nconst staticData = $getWorkflowStaticData('global');\n\n// Add to stopped emails list\nif (!staticData.stopped_emails) staticData.stopped_emails = {};\nstaticData.stopped_emails[email] = data.stopped_at || new Date().toISOString();\n\n// Also mark any active partial record as unsubscribed\nif (staticData.partial_records) {\n  for (const [resumeId, record] of Object.entries(staticData.partial_records)) {\n    if (record.email === email && record.partial_status === 'in_progress') {\n      staticData.partial_records[resumeId].partial_status = 'unsubscribed';\n      staticData.partial_records[resumeId].unsubscribed_at = new Date().toISOString();\n    }\n  }\n}\n\n// Also mark any active nurture lead as unsubscribed\nif (staticData.nurture_leads && staticData.nurture_leads[email]) {\n  staticData.nurture_leads[email].nurture_status = 'unsubscribed';\n}\n\nreturn [{ json: { ok: true, email, stopped: true } }];\n"
+      },
+      "id": "drip-stop-handler",
+      "name": "06 — Drip Stop Handler",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        420,
+        900
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "schedule-drip",
+      "name": "Schedule: Drip Check (1h)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [
+        200,
+        1100
+      ],
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": {
+        "functionCode": "/**\n * n8n Function Node: Zoho OAuth2 Token Refresh\n *\n * Manages Zoho access token lifecycle:\n *   - Checks if current token is still valid (cached in static data)\n *   - If expired or missing, refreshes using ZOHO_REFRESH_TOKEN\n *   - Returns valid access_token for downstream Zoho API calls\n *\n * Usage: Place before any Zoho HTTP Request node.\n *        Downstream nodes reference: {{ $json.zoho_access_token }}\n *\n * Input:  Any (pass-through)\n * Output: Same data + zoho_access_token\n */\n\nconst staticData = $getWorkflowStaticData('global');\nconst now = Date.now();\n\n// Check cached token\nconst tokenExpiry = staticData.zoho_token_expiry || 0;\nconst cachedToken = staticData.zoho_access_token || '';\n\nif (cachedToken && now < tokenExpiry) {\n  // Token still valid — pass through\n  return [{\n    json: {\n      ...$input.first().json,\n      zoho_access_token: cachedToken,\n    }\n  }];\n}\n\n// --- Refresh token ---\ntry {\n  const response = await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'https://accounts.zoho.com/oauth/v2/token',\n    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n    body: new URLSearchParams({\n      grant_type: 'refresh_token',\n      client_id: $env.ZOHO_CLIENT_ID,\n      client_secret: $env.ZOHO_CLIENT_SECRET,\n      refresh_token: $env.ZOHO_REFRESH_TOKEN,\n    }).toString(),\n    timeout: 10000,\n  });\n\n  if (!response.access_token) {\n    throw new Error(`Zoho token refresh failed: ${JSON.stringify(response)}`);\n  }\n\n  // Cache token — Zoho tokens last 1 hour, refresh 5 min early\n  staticData.zoho_access_token = response.access_token;\n  staticData.zoho_token_expiry = now + ((response.expires_in || 3600) - 300) * 1000;\n\n  return [{\n    json: {\n      ...$input.first().json,\n      zoho_access_token: response.access_token,\n    }\n  }];\n\n} catch (err) {\n  console.log('Zoho token refresh failed:', err.message);\n\n  // Return error flag — downstream nodes should check this\n  return [{\n    json: {\n      ...$input.first().json,\n      zoho_access_token: null,\n      zoho_auth_error: err.message,\n    }\n  }];\n}\n"
+      },
+      "id": "zoho-auth-drip",
+      "name": "07 — Zoho Auth (Drip)",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        420,
+        1100
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "/**\n * n8n Function Node: Drip Email Check + Send via Resend\n *\n * Called by n8n Schedule Trigger (runs every hour).\n * Iterates partial_records and checks if drip emails need sending.\n *\n * STOP CONDITIONS:\n *   1. Lead completed assessment (partial_status = 'completed' in Zoho)\n *   2. Lead clicked unsubscribe link (drip_stopped = true in static data)\n *   3. Joe manually set Drip_Stopped in Zoho\n *   4. 30 days elapsed → mark abandoned\n *\n * Email sequence (resume nurture for partial submits):\n *   Email 1 — Immediate (sent by 05-partial-save, NOT this node)\n *   Email 2 — T+24h\n *   Email 3 — T+72h (final)\n *\n * All emails sent via Resend HTTP API.\n * Each email includes an unsubscribe link: /api/drip/stop?email=...&token=...\n *\n * Input:  Triggered by schedule. Receives zoho_access_token from upstream auth node.\n * Output: Array of Resend email payloads to send (downstream HTTP Request node)\n */\n\nconst crypto = require('crypto');\n\nconst staticData = $getWorkflowStaticData('global');\nconst partialRecords = staticData.partial_records || {};\nconst stoppedEmails = staticData.stopped_emails || {};\nconst now = Date.now();\nconst HOUR = 3600000;\nconst zohoToken = $input.first().json.zoho_access_token || null;\nconst HMAC_SECRET = $env.HMAC_SECRET || 'fulcrum-dev-secret';\nconst APP_URL = $env.APP_URL || 'https://leverage.fulcrumcollective.io';\nconst FROM_EMAIL = $env.RESEND_FROM_EMAIL || 'joe@fulcrumcollective.io';\n\nconst emailsToSend = [];\n\nfor (const [resumeId, record] of Object.entries(partialRecords)) {\n  // Skip completed or abandoned\n  if (record.partial_status !== 'in_progress') continue;\n\n  // Check stop list (unsubscribe clicks)\n  if (stoppedEmails[record.email]) {\n    partialRecords[resumeId].partial_status = 'unsubscribed';\n    partialRecords[resumeId].unsubscribed_at = stoppedEmails[record.email];\n    continue;\n  }\n\n  const createdAt = new Date(record.created_at).getTime();\n  const emailsSent = record.drip_emails_sent || 0;\n  const hoursSinceCreated = (now - createdAt) / HOUR;\n\n  // Mark as abandoned after 30 days\n  if (hoursSinceCreated > 720) {\n    partialRecords[resumeId].partial_status = 'abandoned';\n    partialRecords[resumeId].abandoned_at = new Date().toISOString();\n    continue;\n  }\n\n  // Only check for Email 2 or Email 3 timing\n  const shouldSendEmail2 = emailsSent === 1 && hoursSinceCreated >= 24;\n  const shouldSendEmail3 = emailsSent === 2 && hoursSinceCreated >= 72;\n\n  if (!shouldSendEmail2 && !shouldSendEmail3) continue;\n\n  // --- HALT CONDITION: Check Zoho before sending ---\n  if (zohoToken) {\n    try {\n      const zohoResponse = await this.helpers.httpRequest({\n        method: 'GET',\n        url: `https://www.zohoapis.com/crm/v2/Leads/search?email=${encodeURIComponent(record.email)}`,\n        headers: { 'Authorization': `Zoho-oauthtoken ${zohoToken}` },\n        timeout: 10000,\n      });\n\n      const lead = zohoResponse?.data?.[0];\n      if (lead) {\n        if (lead.partial_status === 'completed') {\n          partialRecords[resumeId].partial_status = 'completed';\n          continue;\n        }\n        if (lead.Drip_Stopped === true) {\n          partialRecords[resumeId].partial_status = 'unsubscribed';\n          continue;\n        }\n      }\n    } catch (zohoErr) {\n      // Zoho check failed — fail-open, still send email\n      console.log('Zoho check failed:', zohoErr.message);\n    }\n  }\n\n  // --- Build unsubscribe link ---\n  const unsubToken = crypto\n    .createHmac('sha256', HMAC_SECRET)\n    .update(record.email.toLowerCase())\n    .digest('hex')\n    .substring(0, 16);\n  const unsubUrl = `${APP_URL}/api/drip/stop?email=${encodeURIComponent(record.email)}&token=${unsubToken}`;\n\n  // --- Build email payload ---\n  const firstName = record.first_name || (record.name || '').split(' ')[0] || 'there';\n  const companyName = record.company_name || 'your company';\n  const resumeUrl = `${APP_URL}?resume_id=${resumeId}`;\n\n  if (shouldSendEmail2) {\n    emailsToSend.push({\n      resume_id: resumeId,\n      resend_payload: {\n        from: FROM_EMAIL,\n        to: record.email,\n        reply_to: 'joe@fulcrumcollective.io',\n        subject: `Still thinking it over, ${firstName}?`,\n        html: buildEmail2Html(firstName, companyName, resumeUrl, unsubUrl),\n      },\n    });\n    partialRecords[resumeId].drip_emails_sent = 2;\n    partialRecords[resumeId].drip_2_sent_at = new Date().toISOString();\n  }\n\n  if (shouldSendEmail3) {\n    emailsToSend.push({\n      resume_id: resumeId,\n      resend_payload: {\n        from: FROM_EMAIL,\n        to: record.email,\n        reply_to: 'joe@fulcrumcollective.io',\n        subject: `Last chance: Your Leverage Brief assessment is expiring, ${firstName}`,\n        html: buildEmail3Html(firstName, companyName, resumeUrl, unsubUrl),\n      },\n    });\n    partialRecords[resumeId].drip_emails_sent = 3;\n    partialRecords[resumeId].drip_3_sent_at = new Date().toISOString();\n  }\n}\n\n// Persist updates\nstaticData.partial_records = partialRecords;\nstaticData.stopped_emails = stoppedEmails;\n\nif (emailsToSend.length === 0) {\n  return [{ json: { no_emails: true, records_scanned: Object.keys(partialRecords).length } }];\n}\n\nreturn emailsToSend.map(e => ({ json: e }));\n\n// ═══════════════════════════════════════════════\n// EMAIL TEMPLATES\n// ═══════════════════════════════════════════════\n\nfunction buildEmail2Html(name, company, url, unsubUrl) {\n  return `<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"></head>\n<body style=\"font-family: Arial, Helvetica, sans-serif; background: #F7F5F2; color: #000; padding: 40px 20px;\">\n  <div style=\"max-width: 560px; margin: 0 auto;\">\n    <div style=\"margin-bottom: 24px;\">\n      <a href=\"https://www.fulcrumcollective.io\"><img src=\"https://fulcrumcollective.io/wp-content/uploads/2026/03/Fulcrum-Logo.png\" alt=\"Fulcrum Collective\" width=\"120\" style=\"width: 120px; height: auto;\" /></a>\n    </div>\n    <h2 style=\"font-size: 22px; margin-bottom: 16px;\">Still thinking it over, ${name}?</h2>\n    <p style=\"font-size: 16px; line-height: 1.6; color: #333;\">\n      We saved your progress on the Leverage Brief assessment for <strong>${company}</strong>.\n      It only takes a few more minutes to complete.\n    </p>\n    <p style=\"font-size: 16px; line-height: 1.6; color: #333;\">\n      Your personalized Leverage Brief is waiting — pick up right where you left off.\n    </p>\n    <div style=\"text-align: center; margin: 32px 0;\">\n      <a href=\"${url}\" style=\"display: inline-block; background: #27E7FE; color: #000; font-weight: 600; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px;\">\n        Resume My Assessment &rarr;\n      </a>\n    </div>\n    <p style=\"font-size: 14px; color: #666;\">\n      <strong>Need help?</strong> Reply to this email and our team will assist you.\n    </p>\n    <div style=\"margin-top: 32px; padding-top: 16px; border-top: 1px solid #e0ddd8;\">\n      <p style=\"font-size: 11px; color: #aaa;\">\n        Fulcrum Collective &middot;\n        <a href=\"${unsubUrl}\" style=\"color: #aaa;\">Unsubscribe</a>\n      </p>\n    </div>\n  </div>\n</body>\n</html>`;\n}\n\nfunction buildEmail3Html(name, company, url, unsubUrl) {\n  return `<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"></head>\n<body style=\"font-family: Arial, Helvetica, sans-serif; background: #F7F5F2; color: #000; padding: 40px 20px;\">\n  <div style=\"max-width: 560px; margin: 0 auto;\">\n    <div style=\"margin-bottom: 24px;\">\n      <a href=\"https://www.fulcrumcollective.io\"><img src=\"https://fulcrumcollective.io/wp-content/uploads/2026/03/Fulcrum-Logo.png\" alt=\"Fulcrum Collective\" width=\"120\" style=\"width: 120px; height: auto;\" /></a>\n    </div>\n    <h2 style=\"font-size: 22px; margin-bottom: 16px;\">Last chance, ${name}</h2>\n    <p style=\"font-size: 16px; line-height: 1.6; color: #333;\">\n      We know you're busy — that's exactly why the Leverage Brief exists. In just a few more minutes,\n      you'll have a clear set of priorities for <strong>${company}</strong>.\n    </p>\n    <p style=\"font-size: 16px; line-height: 1.6; color: #333;\">\n      Your saved progress will expire soon. This is our final reminder.\n    </p>\n    <div style=\"text-align: center; margin: 32px 0;\">\n      <a href=\"${url}\" style=\"display: inline-block; background: #27E7FE; color: #000; font-weight: 600; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px;\">\n        Complete My Assessment &rarr;\n      </a>\n    </div>\n    <p style=\"font-size: 14px; color: #666;\">\n      <strong>Questions?</strong> Reply to this email — our team reads every response.\n    </p>\n    <div style=\"margin-top: 32px; padding-top: 16px; border-top: 1px solid #e0ddd8;\">\n      <p style=\"font-size: 11px; color: #aaa;\">\n        Fulcrum Collective &middot;\n        <a href=\"${unsubUrl}\" style=\"color: #aaa;\">Unsubscribe</a>\n      </p>\n    </div>\n  </div>\n</body>\n</html>`;\n}\n"
+      },
+      "id": "drip-check",
+      "name": "08 — Drip Check + Build Emails",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        640,
+        1100
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.no_emails }}",
+              "operation": "notEqual",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-drip-emails",
+      "name": "IF: Drip Emails to Send?",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        860,
+        1100
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.RESEND_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.resend_payload) }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "resend-drip",
+      "name": "Resend: Drip Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        1080,
+        1100
+      ],
+      "typeVersion": 4,
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Webhook: Partial Save": {
+      "main": [
+        [
+          {
+            "node": "01 — Partial Save + UUID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "01 — Partial Save + UUID": {
+      "main": [
+        [
+          {
+            "node": "02 — Zoho Auth Refresh",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 — Zoho Auth Refresh": {
+      "main": [
+        [
+          {
+            "node": "03 — Zoho Partial Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 — Zoho Partial Upsert": {
+      "main": [
+        [
+          {
+            "node": "Respond: Success",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF: New Record? Send Email 1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF: Zoho 401?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: New Record? Send Email 1": {
+      "main": [
+        [
+          {
+            "node": "04 — Build Email 1 (Save Confirmation)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "04 — Build Email 1 (Save Confirmation)": {
+      "main": [
+        [
+          {
+            "node": "Resend: Email 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Zoho 401?": {
+      "main": [
+        [
+          {
+            "node": "Force Token Refresh",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Webhook: Get Partial Data": {
+      "main": [
+        [
+          {
+            "node": "05 — Get Partial Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook: Drip Stop": {
+      "main": [
+        [
+          {
+            "node": "06 — Drip Stop Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule: Drip Check (1h)": {
+      "main": [
+        [
+          {
+            "node": "07 — Zoho Auth (Drip)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "07 — Zoho Auth (Drip)": {
+      "main": [
+        [
+          {
+            "node": "08 — Drip Check + Build Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "08 — Drip Check + Build Emails": {
+      "main": [
+        [
+          {
+            "node": "IF: Drip Emails to Send?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Drip Emails to Send?": {
+      "main": [
+        [
+          {
+            "node": "Resend: Drip Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveExecutionProgress": true
+  },
+  "staticData": {
+    "global": {
+      "partial_records": {},
+      "stopped_emails": {},
+      "zoho_access_token": null,
+      "zoho_token_expiry": 0
+    }
+  },
+  "tags": [
+    {
+      "name": "leverage-brief"
+    },
+    {
+      "name": "partial-capture"
+    },
+    {
+      "name": "drip-emails"
+    },
+    {
+      "name": "production"
+    }
+  ]
+}

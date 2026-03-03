@@ -1,0 +1,854 @@
+{
+  "name": "Leverage Brief — Full Assessment Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fulcrum-assess-full",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-full",
+      "name": "Webhook: Full Submit",
+      "type": "n8n-nodes-base.webhook",
+      "position": [
+        200,
+        300
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "functionCode": "/**\n * n8n Function Node: Lead Enrichment via Instantly\n *\n * Enriches incoming leads using Instantly's API.\n * Uses company domain first, falls back to email-based lookup.\n *\n * Input:  Webhook payload with company_url, email, company_name\n * Output: Enriched lead with headcount, annual_revenue, industry, linkedin_url\n *\n * Paste this into an n8n Function node.\n */\n\nconst companyUrl = $input.first().json.company_url || '';\nconst email = $input.first().json.email || '';\nconst companyName = $input.first().json.company_name || '';\n\nlet enrichment = {\n  headcount: 0,\n  annual_revenue: 0,\n  industry: 'Unknown',\n  linkedin_url: '',\n  enrichment_source: 'none',\n  enrichment_failed: false,\n};\n\n// Extract clean domain from company URL\nconst domain = companyUrl.replace(/^https?:\\/\\//, '').replace(/\\/.*$/, '');\n\n// --- Instantly Enrichment (Company Lookup) ---\ntry {\n  const response = await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'https://api.instantly.ai/api/v2/leads/enrich',\n    headers: {\n      'Content-Type': 'application/json',\n      'Authorization': `Bearer ${$env.INSTANTLY_API_KEY}`,\n    },\n    body: {\n      email: email,\n      company_domain: domain || undefined,\n    },\n    timeout: 15000,\n  });\n\n  if (response) {\n    enrichment.headcount = response.company_headcount || response.company_size || 0;\n    enrichment.annual_revenue = response.company_revenue || response.annual_revenue || 0;\n    enrichment.industry = response.company_industry || response.industry || 'Unknown';\n    enrichment.linkedin_url = response.linkedin_url || response.company_linkedin || '';\n    enrichment.enrichment_source = 'instantly';\n  }\n} catch (err) {\n  console.log('Instantly enrichment failed:', err.message);\n\n  // --- Fallback: Try v1 endpoint ---\n  try {\n    const fallbackResponse = await this.helpers.httpRequest({\n      method: 'GET',\n      url: 'https://api.instantly.ai/api/v1/lead/data',\n      qs: {\n        api_key: $env.INSTANTLY_API_KEY,\n        email: email,\n      },\n      timeout: 15000,\n    });\n\n    if (fallbackResponse) {\n      enrichment.headcount = fallbackResponse.company_headcount || 0;\n      enrichment.annual_revenue = fallbackResponse.company_revenue || 0;\n      enrichment.industry = fallbackResponse.company_industry || 'Unknown';\n      enrichment.linkedin_url = fallbackResponse.linkedin_url || '';\n      enrichment.enrichment_source = 'instantly_v1';\n    }\n  } catch (fallbackErr) {\n    console.log('Instantly v1 fallback also failed:', fallbackErr.message);\n    enrichment.enrichment_failed = true;\n  }\n}\n\n// Pass through all original data + enrichment\nreturn [{\n  json: {\n    ...$input.first().json,\n    enrichment,\n  }\n}];\n"
+      },
+      "id": "enrich-lead",
+      "name": "01 — Enrich Lead (Apollo/Instantly)",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        420,
+        300
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "/**\n * n8n Function Node: Gatekeeper 2.5 — Premium vs Lite Routing\n *\n * Input:  Enriched lead with enrichment.headcount + enrichment.annual_revenue\n * Output: Same payload with gatekeeper_path and is_premium flags\n *\n * After this node, use an n8n IF node to branch:\n *   Condition: {{ $json.is_premium === true }}\n *   True  → Premium path (Perplexity research → Premium synthesis)\n *   False → Lite path (skip research → Standard synthesis)\n */\n\nconst HEADCOUNT_THRESHOLD = 5;\nconst REVENUE_THRESHOLD = 250000;\n\nconst enrichment = $input.first().json.enrichment || {};\nconst headcount = enrichment.headcount || 0;\nconst annualRevenue = enrichment.annual_revenue || 0;\n\n// Lite if BOTH below threshold; Premium otherwise\nconst isLite = headcount < HEADCOUNT_THRESHOLD && annualRevenue < REVENUE_THRESHOLD;\n\nconst gatekeeperPath = isLite ? 'LITE' : 'PREMIUM';\nconst isPremium = !isLite;\n\n// Compute Strategic Gap Score (0-10 scale)\n// Based on sunday_dread (1-5), revenue_goal_gap, team_confidence\nconst sundayDreadRaw = $input.first().json.sunday_dread || '';\nconst sundayDreadScore = parseInt(sundayDreadRaw.charAt(0)) || 3;\n\nconst revenueGap = $input.first().json.revenue_goal_gap || '';\nlet revenueGapScore = 5; // default moderate\nif (revenueGap.includes('no gap')) revenueGapScore = 1;\nelse if (revenueGap.includes('Slight')) revenueGapScore = 3;\nelse if (revenueGap.includes('Moderate')) revenueGapScore = 5;\nelse if (revenueGap.includes('Significant')) revenueGapScore = 7;\nelse if (revenueGap.includes('Critical')) revenueGapScore = 9;\n\nconst teamConfidence = $input.first().json.team_confidence || '';\nconst confidenceScore = parseInt(teamConfidence.charAt(0)) || 3;\n// Invert confidence: low confidence = high gap\nconst confidenceGap = 6 - confidenceScore;\n\n// Weighted average: Sunday Dread (30%), Revenue Gap (40%), Confidence Gap (30%)\nconst strategicGapScore = Math.round(\n  ((sundayDreadScore * 2 * 0.3) + (revenueGapScore * 0.4) + (confidenceGap * 2 * 0.3)) * 10\n) / 10;\n\n// Strategic path: VALIDATE (gap < 4), CLARIFY (4-7), BUILD (> 7)\nlet strategicPath = 'CLARIFY';\nif (strategicGapScore < 4) strategicPath = 'VALIDATE';\nelse if (strategicGapScore > 7) strategicPath = 'BUILD';\n\nreturn [{\n  json: {\n    ...$input.first().json,\n    gatekeeper_path: gatekeeperPath,\n    is_premium: isPremium,\n    strategic_gap_score: strategicGapScore,\n    strategic_path: strategicPath,\n  }\n}];\n"
+      },
+      "id": "gatekeeper",
+      "name": "02 — Gatekeeper 2.5",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        640,
+        300
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.is_premium }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-premium",
+      "name": "IF: Premium Path?",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        860,
+        300
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "/**\n * n8n Function Node: Perplexity Sonar Deep Research (Premium Path Only)\n *\n * Input:  Gatekeeper-routed payload (is_premium === true)\n * Output: Same payload + research_package (or research_failed flag)\n *\n * 60-second timeout enforced. On failure, sets research_failed = true\n * and continues pipeline — Claude will use intake + enrichment only.\n */\n\nconst TIMEOUT_MS = 60000;\n\nconst companyName = $input.first().json.company_name || '';\nconst companyUrl = $input.first().json.company_url || '';\nconst industry = $input.first().json.enrichment?.industry || 'Unknown';\nconst icpDescription = $input.first().json.icp_description || '';\nconst topCompetitor = $input.first().json.top_competitor || '';\nconst allCompetitors = [\n  $input.first().json.top_competitor,\n  $input.first().json.competitor_url_2,\n  $input.first().json.competitor_url_3,\n  $input.first().json.competitor_url_4,\n  $input.first().json.competitor_url_5,\n].filter(Boolean);\nconst clientUrls = [\n  $input.first().json.client_url_1,\n  $input.first().json.client_url_2,\n  $input.first().json.client_url_3,\n].filter(Boolean);\nconst biggestBet = $input.first().json.biggest_strategic_bet || '';\n\n// Build research queries\nconst queries = [\n  {\n    key: 'company_research',\n    prompt: `Provide a detailed business analysis of ${companyName} (${companyUrl}). Include their market position, recent news, growth trajectory, and key challenges in the ${industry} industry.`,\n  },\n  {\n    key: 'competitive_landscape',\n    prompt: `Analyze the competitive landscape for ${companyName} in the ${industry} industry. Their competitors include: ${allCompetitors.length > 0 ? allCompetitors.join(', ') : 'unknown'}. What are the key differentiators and market dynamics?`,\n  },\n  {\n    key: 'icp_gap_analysis',\n    prompt: `For a company in ${industry} whose ideal customer is: \"${icpDescription}\", identify gaps between their current positioning and optimal ICP targeting. What opportunities are they likely missing?`,\n  },\n  {\n    key: 'industry_trends',\n    prompt: `What are the top 3 strategic trends in the ${industry} industry that would impact a company making this bet: \"${biggestBet}\"? Focus on actionable insights.`,\n  },\n];\n\nlet researchPackage = {};\nlet researchFailed = false;\nlet researchModel = 'perplexity_sonar';\n\ntry {\n  // Race all queries against a 60s timeout\n  const controller = new AbortController();\n  const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);\n\n  const results = await Promise.allSettled(\n    queries.map(async (q) => {\n      const response = await this.helpers.httpRequest({\n        method: 'POST',\n        url: 'https://api.perplexity.ai/chat/completions',\n        headers: {\n          'Authorization': `Bearer ${$env.PERPLEXITY_API_KEY}`,\n          'Content-Type': 'application/json',\n        },\n        body: {\n          model: 'sonar',\n          messages: [\n            { role: 'system', content: 'You are a business research analyst. Provide concise, data-driven insights.' },\n            { role: 'user', content: q.prompt },\n          ],\n          max_tokens: 1024,\n        },\n        timeout: TIMEOUT_MS,\n      });\n\n      return {\n        key: q.key,\n        content: response.choices?.[0]?.message?.content || '',\n        citations: response.citations || [],\n      };\n    })\n  );\n\n  clearTimeout(timeoutId);\n\n  // Collect successful results\n  for (const result of results) {\n    if (result.status === 'fulfilled') {\n      researchPackage[result.value.key] = {\n        content: result.value.content,\n        citations: result.value.citations,\n      };\n    }\n  }\n\n  // If zero queries succeeded, flag as failed\n  if (Object.keys(researchPackage).length === 0) {\n    researchFailed = true;\n    researchModel = 'fallback_lite';\n  }\n\n} catch (err) {\n  console.log('Perplexity research failed (timeout or error):', err.message);\n  researchFailed = true;\n  researchModel = 'fallback_lite';\n}\n\nreturn [{\n  json: {\n    ...$input.first().json,\n    research_package: researchPackage,\n    research_failed: researchFailed,\n    research_model: researchModel,\n  }\n}];\n"
+      },
+      "id": "perplexity-research",
+      "name": "03 — Perplexity Deep Research",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        1080,
+        200
+      ],
+      "typeVersion": 1,
+      "notesInFlow": true,
+      "notes": "PREMIUM path only. 60s timeout."
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "research_model",
+              "value": "skipped_lite"
+            }
+          ],
+          "boolean": [
+            {
+              "name": "research_failed",
+              "value": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "lite-skip-research",
+      "name": "LITE: Skip Research",
+      "type": "n8n-nodes-base.set",
+      "position": [
+        1080,
+        420
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {},
+      "id": "merge-paths",
+      "name": "Merge Premium/Lite",
+      "type": "n8n-nodes-base.merge",
+      "position": [
+        1300,
+        300
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "functionCode": "/**\n * n8n Function Node: Claude Synthesis (Node 04)\n *\n * Builds the system prompt + user message for Claude 3.5 Sonnet.\n * Handles Premium vs Lite paths, research_failed fallback,\n * and brand terminology enforcement.\n *\n * Input:  Full pipeline payload (enrichment, gatekeeper, research_package, all form answers)\n * Output: { synthesized_brief, model_used, tokens_used }\n */\n\n// --- Collect all inputs ---\nconst data = $input.first().json;\n\nconst name = data.name || '';\nconst companyName = data.company_name || '';\nconst companyUrl = data.company_url || '';\nconst email = data.email || '';\n\n// Form answers\nconst vacationTest = data.vacation_test || '';\nconst interruptionFrequency = data.interruption_frequency || '';\nconst sundayDread = data.sunday_dread || '';\nconst decisionBottleneck = data.decision_bottleneck || '';\nconst threeYearTarget = data.three_year_target || '';\nconst biggestStrategicBet = data.biggest_strategic_bet || '';\nconst teamConfidence = data.team_confidence || '';\nconst revenueGoalGap = data.revenue_goal_gap || '';\nconst currentClientBase = data.current_client_base || '';\nconst icpDescription = data.icp_description || '';\nconst topCompetitor = data.top_competitor || '';\nconst winRate = data.win_rate || '';\nconst fulcrumPriorities = data.fulcrum_priorities || '';\nconst monthlyFocus = data.monthly_focus || '';\nconst biggestObstacle = data.biggest_obstacle || '';\n\n// Enrichment\nconst enrichment = data.enrichment || {};\nconst headcount = enrichment.headcount || 0;\nconst annualRevenue = enrichment.annual_revenue || 0;\nconst industry = enrichment.industry || 'Unknown';\n\n// Gatekeeper\nconst gatekeeperPath = data.gatekeeper_path || 'LITE';\nconst strategicGapScore = data.strategic_gap_score || 0;\nconst strategicPath = data.strategic_path || 'CLARIFY';\nconst isPremium = data.is_premium === true;\n\n// Research (Premium only)\nconst researchPackage = data.research_package || {};\nconst researchFailed = data.research_failed === true;\n\n// ============================================================\n// SYSTEM PROMPT\n// ============================================================\nconst systemPrompt = `You are the Fulcrum Strategic Architect — a senior business strategist embedded inside the Fulcrum Execution Framework. Your job is to produce a Leverage Brief: a concise, high-signal diagnostic document for a business leader.\n\nYou will receive the leader's self-reported operational data, strategic inputs, and (when available) third-party market research. Your output is the final Leverage Brief that gets delivered as a branded PDF.\n\n═══════════════════════════════════════════════\nCORE ANALYSIS METHOD: THE MIRROR\n═══════════════════════════════════════════════\n\nBefore writing anything, perform this internal analysis (do NOT include it in the output):\n\n1. READ the \"Sunday Dread\" response carefully. This is the emotional signal. It reveals where the leader FEELS the most friction.\n\n2. IDENTIFY the Primary Pain Domain. Classify it into exactly one:\n   - SALES: Dread tied to pipeline, revenue, closing, client acquisition\n   - OPERATIONS: Dread tied to fires, processes breaking, team needing them for every decision\n   - LEADERSHIP: Dread tied to team alignment, strategy confidence, feeling alone at the top\n   - GROWTH: Dread tied to stagnation, being stuck, not scaling fast enough\n\n3. MIRROR the leader's own language back to them in the Executive Summary. Use their exact words and phrases — do not sanitize or corporate-speak them. When a leader says \"I'm the bottleneck,\" you say \"You identified yourself as the bottleneck.\" This creates instant trust and proves you listened.\n\n4. TRACE every recommendation back to their specific inputs. If you cannot point to a specific form field that justifies an action, delete the action. Zero generic advice.\n\n═══════════════════════════════════════════════\nOUTPUT STRUCTURE\n═══════════════════════════════════════════════\n\nGenerate the Leverage Brief in this exact structure:\n\n---\n\n## Executive Summary\n\n2-3 paragraphs. Open by mirroring the leader's Primary Pain Domain and Sunday Dread language. Then bridge to what the data reveals about their strategic position.\n\nIf enrichment data is available, weave in company context (industry: {{industry}}, headcount: {{headcount}}, revenue band) to demonstrate you understand their scale and sector.\n\nEnd with a single sentence that frames the rest of the brief: \"The three actions below are designed to [address the specific pain domain] within your first week.\"\n\n---\n\n## Strategic Gap Analysis\n\nA structured comparison:\n\n**Where You Are:**\n- Summarize their current state using: vacation_test, interruption_frequency, decision_bottleneck, current_client_base, win_rate\n- Be specific and cite their language\n\n**Where You Need to Be:**\n- Synthesize from: three_year_target, biggest_strategic_bet, revenue_goal_gap\n- If research is available, layer in competitive positioning and market context\n\n**The Gap:**\n- Name the gap clearly. Use the Strategic Gap Score (${strategicGapScore}/10) as a quantitative anchor.\n- Map to the Strategic Path:\n  - VALIDATE (score < 4): \"Your foundation is solid. The priority is validating and accelerating what's already working.\"\n  - CLARIFY (score 4-7): \"There is a meaningful gap between your current operations and your strategic target. Clarity on priorities will close it.\"\n  - BUILD (score > 7): \"The gap is significant. Immediate, focused action on your highest-leverage priority is critical.\"\n\n---\n\n## Your Leverage Actions\n\n${researchFailed ? '> **Note:** Our deep-market scan is currently processing; these actions are based on your immediate operational profile.\\n' : ''}\n\nThree actions. Each action MUST follow the Atomic Monday Rule:\n\n**The Atomic Monday Rule:** Every action must be something the leader can literally begin at 9:00 AM on a Monday morning. Not \"develop a strategy\" — but \"open a blank doc and write the 3 criteria your next hire must meet.\" Not \"improve your sales process\" — but \"pull your last 10 lost deals and tag each with the reason in a spreadsheet.\" Each action is a single, concrete, 60-to-90-minute task with a clear deliverable.\n\nFormat each action as:\n\n### Action [1/2/3]: [Action Title]\n**Why this matters for ${companyName}:** [1-2 sentences tying back to their specific input — cite the form field]\n**Your Monday morning move:** [The atomic, concrete task — what they open, what they write, what they send]\n**What this unlocks:** [The downstream impact — what changes if they do this]\n\nAction selection priority:\n1. Action 1 MUST address the Primary Pain Domain (from Sunday Dread)\n2. Action 2 should address their biggest_strategic_bet or revenue_goal_gap\n3. Action 3 should address their operational bottleneck (vacation_test / interruption_frequency)\n\n---\n\n## Your Fulcrum North Star\n\n1 paragraph. Synthesize their three_year_target and biggest_strategic_bet into a clear Fulcrum North Star statement. Frame it using the Fulcrum Strategic Architecture: the North Star is the destination; the Fulcrum Priorities are the quarterly leverage points; the Fulcrum Rhythm Meeting is how the team stays aligned weekly.\n\n---\n\n## Next Step\n\nSingle CTA paragraph. Invite them to a Fulcrum Strategy Session with Fulcrum Collective to build their full Fulcrum Execution Framework. Tone: confident, not salesy. Frame it as the natural next step for leaders who want to turn this brief into a 90-day execution plan.\n\n═══════════════════════════════════════════════\nBRAND MOAT — ABSOLUTE RULES\n═══════════════════════════════════════════════\n\nTERMINOLOGY YOU MUST USE (these are proprietary Fulcrum terms):\n- Fulcrum Method\n- Fulcrum Strategic Architecture\n- Fulcrum Priorities\n- Fulcrum North Star\n- Fulcrum Rhythm Meeting\n- Fulcrum Execution Framework\n\nTERMINOLOGY YOU MUST NEVER USE (competing framework IP):\n- EOS\n- Pinnacle\n- V/TO\n- Rocks\n- L10\n- Traction\n- Entrepreneurial Operating System\n- Any other competing framework term\n\nIf you find yourself about to use a competing term, substitute the Fulcrum equivalent. There is always a direct mapping:\n- \"Rocks\" → \"Fulcrum Priorities\"\n- \"V/TO\" → \"Fulcrum North Star\"\n- \"L10\" → \"Fulcrum Rhythm Meeting\"\n- \"Traction\" → \"Fulcrum Execution Framework\"\n\n═══════════════════════════════════════════════\nTONE & STYLE\n═══════════════════════════════════════════════\n\n- Write like a trusted advisor, not a consultant selling something\n- Be direct. No filler. No \"in today's fast-paced business environment\" preamble\n- Use the leader's own words when possible — mirroring builds trust\n- Confidence without arrogance: you've seen this pattern before and know what works\n- Second person (\"you\") throughout — this is written TO the leader\n- Short paragraphs. No walls of text. Executives skim\n- Bold key phrases for scanability\n\n═══════════════════════════════════════════════\nQUALITY GATES (self-check before outputting)\n═══════════════════════════════════════════════\n\nBefore finalizing, verify:\n□ Every action passes the Atomic Monday Rule (startable at 9 AM, completable in 60-90 min)\n□ Zero generic advice — every recommendation traces to a specific input field\n□ Sunday Dread language is mirrored in the Executive Summary\n□ No competing framework terminology appears anywhere\n□ All five Fulcrum terms are used at least once\n□ Company name, industry, and scale are referenced (not a template)\n□ Strategic Gap Score is cited in the Gap Analysis\n□ If research_failed: fallback note is present, no mention of tools/APIs`;\n\n// ============================================================\n// USER MESSAGE — Feed all prospect data\n// ============================================================\n\nlet userMessage = `Generate the Leverage Brief for this leader.\n\n═══ LEADER PROFILE ═══\nName: ${name}\nCompany: ${companyName}\nWebsite: ${companyUrl}\nIndustry: ${industry}\nHeadcount: ${headcount}\nAnnual Revenue: $${annualRevenue ? annualRevenue.toLocaleString() : 'Not available'}\n\n═══ STEP 2: OPERATIONAL FOUNDATION ═══\nVacation Test (what breaks if they leave for 2 weeks): ${vacationTest}\nInterruption Frequency: ${interruptionFrequency}\nSunday Dread Level: ${sundayDread}\nDecision Bottleneck (decisions only they can make): ${decisionBottleneck}\n\n═══ STEP 3: STRATEGIC NORTH STAR ═══\nThree-Year Target: ${threeYearTarget}\nBiggest Strategic Bet: ${biggestStrategicBet}\nTeam Confidence in Strategy: ${teamConfidence}\nRevenue Goal Gap: ${revenueGoalGap}\n\n═══ STEP 4: MARKET & ICP ═══\nCurrent Client Base: ${currentClientBase}\nIdeal Customer Profile: ${icpDescription}\nTop Competitor: ${topCompetitor}\nWin Rate: ${winRate}\n\n═══ STEP 5: EXECUTION & FOCUS ═══\nFulcrum Priorities (Top 3 this quarter): ${fulcrumPriorities}\nMonthly Focus (single most important outcome): ${monthlyFocus}\nBiggest Obstacle to Growth: ${biggestObstacle}\n\n═══ GATEKEEPER ANALYSIS ═══\nPath: ${gatekeeperPath}\nStrategic Gap Score: ${strategicGapScore}/10\nStrategic Path: ${strategicPath}\nResearch Available: ${!researchFailed && Object.keys(researchPackage).length > 0 ? 'Yes' : 'No'}`;\n\n// Append research package if available (Premium path)\nif (!researchFailed && Object.keys(researchPackage).length > 0) {\n  userMessage += `\\n\\n═══ DEEP MARKET RESEARCH ═══`;\n  for (const [key, research] of Object.entries(researchPackage)) {\n    userMessage += `\\n\\n--- ${key.replace(/_/g, ' ').toUpperCase()} ---\\n${research.content || ''}`;\n    if (research.citations && research.citations.length > 0) {\n      userMessage += `\\nSources: ${research.citations.join(', ')}`;\n    }\n  }\n}\n\n// Append Lite path constraint\nif (!isPremium) {\n  userMessage += `\\n\\n═══ LITE PATH DIRECTIVE ═══\nThis is a Standard (Lite) assessment. No deep research is available.\nYou MUST still personalize every action using:\n- Industry: ${industry}\n- Headcount: ${headcount}\n- All form inputs above\nZero generic advice. Every recommendation must be traceable to the leader's specific inputs.`;\n}\n\n// ============================================================\n// CALL CLAUDE API\n// ============================================================\n\ntry {\n  const response = await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'https://api.anthropic.com/v1/messages',\n    headers: {\n      'x-api-key': $env.ANTHROPIC_API_KEY,\n      'anthropic-version': '2023-06-01',\n      'Content-Type': 'application/json',\n    },\n    body: {\n      model: 'claude-sonnet-4-20250514',\n      max_tokens: 4096,\n      system: systemPrompt,\n      messages: [\n        { role: 'user', content: userMessage },\n      ],\n    },\n    timeout: 90000,\n  });\n\n  const synthesizedBrief = response.content?.[0]?.text || '';\n  const tokensUsed = response.usage || {};\n\n  return [{\n    json: {\n      ...data,\n      synthesized_brief: synthesizedBrief,\n      synthesis_model: 'claude-sonnet-4-20250514',\n      synthesis_tokens: tokensUsed,\n      synthesis_failed: false,\n    }\n  }];\n\n} catch (err) {\n  console.log('Claude synthesis failed:', err.message);\n\n  // Hard fallback — should never happen in production\n  return [{\n    json: {\n      ...data,\n      synthesized_brief: '',\n      synthesis_model: 'failed',\n      synthesis_tokens: {},\n      synthesis_failed: true,\n      synthesis_error: err.message,\n    }\n  }];\n}\n"
+      },
+      "id": "claude-synthesis",
+      "name": "04 — Claude Synthesis",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        1520,
+        300
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "// PDF generation — calls /api/pdf endpoint.\n// Returns pdf_base64 for downstream storage."
+      },
+      "id": "pdf-generation",
+      "name": "05 — Generate PDF",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        1740,
+        300
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "/**\n * n8n Function Node: Store PDF + Get Download URL\n *\n * Runs AFTER PDF generation (05 — Generate PDF).\n * Takes the generated PDF base64, stores it via the /api/pdf/store endpoint,\n * and outputs the permanent download URL for Zoho.\n *\n * Input:  Pipeline data + pdf_base64 from PDF generation\n * Output: Pipeline data + pdf_download_url, pdf_generated_at\n */\n\nconst data = $input.first().json;\nconst pdfBase64 = data.pdf_base64 || '';\nconst companyName = data.company_name || 'report';\nconst email = data.email || '';\n\nif (!pdfBase64) {\n  console.log('No PDF base64 found — skipping storage');\n  return [{\n    json: {\n      ...data,\n      pdf_download_url: '',\n      pdf_generated_at: new Date().toISOString(),\n      pdf_store_error: 'No PDF data available',\n    }\n  }];\n}\n\ntry {\n  const appBaseUrl = $env.APP_BASE_URL || 'https://leverage-brief.vercel.app';\n\n  const response = await this.helpers.httpRequest({\n    method: 'POST',\n    url: `${appBaseUrl}/api/pdf/store`,\n    headers: {\n      'Content-Type': 'application/json',\n    },\n    body: JSON.stringify({\n      pdf_base64: pdfBase64,\n      company_name: companyName,\n      email: email,\n    }),\n    timeout: 30000,\n  });\n\n  const pdfDownloadUrl = response.pdf_download_url || '';\n\n  return [{\n    json: {\n      ...data,\n      pdf_download_url: pdfDownloadUrl,\n      pdf_generated_at: new Date().toISOString(),\n    }\n  }];\n\n} catch (err) {\n  console.log('PDF storage failed:', err.message);\n\n  // Continue pipeline — Zoho will just have an empty PDF_Download_URL\n  return [{\n    json: {\n      ...data,\n      pdf_download_url: '',\n      pdf_generated_at: new Date().toISOString(),\n      pdf_store_error: err.message,\n    }\n  }];\n}\n"
+      },
+      "id": "pdf-store",
+      "name": "05b — Store PDF + Get URL",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        1960,
+        300
+      ],
+      "typeVersion": 1,
+      "notesInFlow": true,
+      "notes": "Stores PDF in Vercel Blob. Returns pdf_download_url."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": true }",
+        "options": {}
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [
+        1960,
+        520
+      ],
+      "typeVersion": 1,
+      "notesInFlow": true,
+      "notes": "Respond immediately so frontend isn't waiting."
+    },
+    {
+      "parameters": {
+        "functionCode": "/**\n * n8n Function Node: Zoho OAuth2 Token Refresh\n *\n * Manages Zoho access token lifecycle:\n *   - Checks if current token is still valid (cached in static data)\n *   - If expired or missing, refreshes using ZOHO_REFRESH_TOKEN\n *   - Returns valid access_token for downstream Zoho API calls\n *\n * Usage: Place before any Zoho HTTP Request node.\n *        Downstream nodes reference: {{ $json.zoho_access_token }}\n *\n * Input:  Any (pass-through)\n * Output: Same data + zoho_access_token\n */\n\nconst staticData = $getWorkflowStaticData('global');\nconst now = Date.now();\n\n// Check cached token\nconst tokenExpiry = staticData.zoho_token_expiry || 0;\nconst cachedToken = staticData.zoho_access_token || '';\n\nif (cachedToken && now < tokenExpiry) {\n  // Token still valid — pass through\n  return [{\n    json: {\n      ...$input.first().json,\n      zoho_access_token: cachedToken,\n    }\n  }];\n}\n\n// --- Refresh token ---\ntry {\n  const response = await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'https://accounts.zoho.com/oauth/v2/token',\n    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n    body: new URLSearchParams({\n      grant_type: 'refresh_token',\n      client_id: $env.ZOHO_CLIENT_ID,\n      client_secret: $env.ZOHO_CLIENT_SECRET,\n      refresh_token: $env.ZOHO_REFRESH_TOKEN,\n    }).toString(),\n    timeout: 10000,\n  });\n\n  if (!response.access_token) {\n    throw new Error(`Zoho token refresh failed: ${JSON.stringify(response)}`);\n  }\n\n  // Cache token — Zoho tokens last 1 hour, refresh 5 min early\n  staticData.zoho_access_token = response.access_token;\n  staticData.zoho_token_expiry = now + ((response.expires_in || 3600) - 300) * 1000;\n\n  return [{\n    json: {\n      ...$input.first().json,\n      zoho_access_token: response.access_token,\n    }\n  }];\n\n} catch (err) {\n  console.log('Zoho token refresh failed:', err.message);\n\n  // Return error flag — downstream nodes should check this\n  return [{\n    json: {\n      ...$input.first().json,\n      zoho_access_token: null,\n      zoho_auth_error: err.message,\n    }\n  }];\n}\n"
+      },
+      "id": "zoho-auth",
+      "name": "06a — Zoho Auth Refresh",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        2180,
+        300
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "/**\n * n8n Function Node: Zoho CRM Lead Upsert (Full Submit)\n *\n * Maps all assessment data to Zoho CRM Lead fields.\n * Handles both new leads and updates to existing partial records.\n * Resend handles immediate emails; Zoho handles nurture cadences.\n *\n * Input:  Full pipeline payload (after synthesis + PDF storage)\n * Output: Zoho CRM API payload ready for the Zoho HTTP Request node\n */\n\nconst data = $input.first().json;\n\n// Name — form now collects first/last separately\nconst firstName = data.first_name || '';\nconst lastName = data.last_name || firstName;\n\nconst email = data.email || '';\nconst companyName = data.company_name || '';\nconst companyUrl = data.company_url || '';\n\n// Enrichment\nconst enrichment = data.enrichment || {};\nconst headcount = enrichment.headcount || 0;\nconst annualRevenue = enrichment.annual_revenue || 0;\nconst industry = enrichment.industry || '';\nconst linkedinUrl = enrichment.linkedin_url || '';\n\n// Scores & paths\nconst strategicGapScore = data.strategic_gap_score || 0;\nconst gatekeeperPath = data.gatekeeper_path || 'LITE';\nconst strategicPath = data.strategic_path || 'CLARIFY';\n\n// Operational (Step 2)\nconst vacationTest = data.vacation_test || '';\nconst interruptionFrequency = data.interruption_frequency || '';\nconst sundayDread = data.sunday_dread || '';\nconst decisionBottleneck = data.decision_bottleneck || '';\n\n// Strategic (Step 3)\nconst threeYearTarget = data.three_year_target || '';\nconst biggestBet = data.biggest_strategic_bet || '';\nconst teamConfidence = data.team_confidence || '';\nconst revenueGoalGap = data.revenue_goal_gap || '';\n\n// Market & ICP (Step 4)\nconst currentClientBase = data.current_client_base || '';\nconst icpDescription = data.icp_description || '';\nconst topCompetitor = data.top_competitor || '';\nconst competitorUrls = [\n  data.top_competitor,\n  data.competitor_url_2,\n  data.competitor_url_3,\n  data.competitor_url_4,\n  data.competitor_url_5,\n].filter(Boolean);\nconst clientUrls = [\n  data.client_url_1,\n  data.client_url_2,\n  data.client_url_3,\n].filter(Boolean);\nconst winRate = data.win_rate || '';\n\n// Execution (Step 5)\nconst fulcrumPriorities = data.fulcrum_priorities || '';\nconst monthlyFocus = data.monthly_focus || '';\nconst biggestObstacle = data.biggest_obstacle || '';\nconst engagementReadiness = data.engagement_readiness || '';\n\n// Readiness label for CRM\nconst readinessMap = {\n  now: 'HOT — Needs guidance now',\n  '30_days': 'WARM — Within 30 days',\n  next_quarter: 'COOL — Next quarter',\n  just_looking: 'COLD — Just curious',\n};\nconst readinessLabel = readinessMap[engagementReadiness] || 'Not specified';\n\n// Resume & PDF\nconst resumeId = data.resume_id || '';\nconst resumeUrl = data.resume_url || '';\nconst pdfDownloadUrl = data.pdf_download_url || '';\nconst pdfGeneratedAt = data.pdf_generated_at || new Date().toISOString();\n\n// Consent\nconst consentTimestamp = data.consent_timestamp || '';\nconst consentIp = data.client_ip || '';\nconst consentVersion = data.consent_version || '2026.01';\n\n// Build Zoho Lead record\nconst zohoRecord = {\n  // Standard fields\n  First_Name: firstName,\n  Last_Name: lastName,\n  Email: email,\n  Company: companyName,\n  Website: companyUrl,\n  Industry: industry,\n  No_of_Employees: headcount,\n  Annual_Revenue: annualRevenue,\n  LinkedIn_URL: linkedinUrl,\n  Lead_Source: 'Fulcrum_Tool',\n\n  // Tags\n  Tag: [\n    { name: 'Fulcrum' },\n    { name: 'Fulcrum_Completed_Assessm' },\n  ],\n\n  // Custom fields — Assessment\n  Strategic_Gap_Score: strategicGapScore,\n  Gatekeeper_Path: gatekeeperPath,\n  Strategic_Path: strategicPath,\n  Lead_Interest_Summary: biggestBet,\n  Sunday_Dread: sundayDread,\n  Fulcrum_Priorities: fulcrumPriorities,\n  Engagement_Readiness: readinessLabel,\n  partial_status: 'completed',\n  Assessment_Tier: gatekeeperPath,\n\n  // Custom fields — Resume & PDF\n  resume_id: resumeId,\n  Resume_URL: resumeUrl,\n  PDF_Download_URL: pdfDownloadUrl,\n  PDF_Generated_At: pdfGeneratedAt,\n\n  // Consent audit trail\n  consent_timestamp: consentTimestamp,\n  consent_ip_address: consentIp,\n  consent_version: consentVersion,\n\n  // Description — full assessment dump for quick CRM scan\n  Description: [\n    `=== FULCRUM ASSESSMENT COMPLETE ===`,\n    `Engagement Readiness: ${readinessLabel}`,\n    `Strategic Gap Score: ${strategicGapScore}/10`,\n    `Gatekeeper Path: ${gatekeeperPath}`,\n    `Strategic Path: ${strategicPath}`,\n    ``,\n    `--- OPERATIONAL ---`,\n    `Vacation Test: ${vacationTest}`,\n    `Interruption Frequency: ${interruptionFrequency}`,\n    `Sunday Dread: ${sundayDread}`,\n    `Decision Bottleneck: ${decisionBottleneck}`,\n    ``,\n    `--- STRATEGIC ---`,\n    `3-Year Target: ${threeYearTarget}`,\n    `Biggest Strategic Bet: ${biggestBet}`,\n    `Team Confidence: ${teamConfidence}`,\n    `Revenue Goal Gap: ${revenueGoalGap}`,\n    ``,\n    `--- MARKET & ICP ---`,\n    `Client Base: ${currentClientBase}`,\n    `ICP: ${icpDescription}`,\n    `Competitors: ${competitorUrls.join(', ') || 'None provided'}`,\n    `Client URLs: ${clientUrls.join(', ') || 'None provided'}`,\n    `Win Rate: ${winRate}`,\n    ``,\n    `--- EXECUTION ---`,\n    `Fulcrum Priorities: ${fulcrumPriorities}`,\n    `Monthly Focus: ${monthlyFocus}`,\n    `Biggest Obstacle: ${biggestObstacle}`,\n    ``,\n    `--- ENRICHMENT ---`,\n    `Industry: ${industry}`,\n    `Headcount: ${headcount}`,\n    `Annual Revenue: $${annualRevenue ? annualRevenue.toLocaleString() : 'N/A'}`,\n    ``,\n    `PDF: ${pdfDownloadUrl}`,\n    `Resume Link: ${resumeUrl}`,\n  ].join('\\n'),\n};\n\n// Upsert criteria — match by email\nconst upsertCriteria = {\n  duplicate_check_fields: ['Email'],\n};\n\nreturn [{\n  json: {\n    zoho_record: zohoRecord,\n    upsert_criteria: upsertCriteria,\n    // Pass through full data for downstream nodes\n    ...data,\n  }\n}];\n"
+      },
+      "id": "zoho-build-payload",
+      "name": "06b — Build Zoho Payload",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        2400,
+        300
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.zohoapis.com/crm/v2/Leads/upsert",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Zoho-oauthtoken {{ $json.zoho_access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ data: [$json.zoho_record], duplicate_check_fields: $json.upsert_criteria.duplicate_check_fields }) }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "zoho-upsert",
+      "name": "06c — Zoho CRM Upsert",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        2620,
+        300
+      ],
+      "typeVersion": 4,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "functionCode": "/**\n * n8n Function Node: Completion Branching\n *\n * Runs AFTER full-submit Zoho upsert in the main pipeline.\n * Handles the state machine transition:\n *\n * 1. Checks if this lead had a prior partial record (by email)\n * 2. If yes: marks partial as 'completed'\n * 3. Determines Implementation Nurture track (PREMIUM vs LITE)\n * 4. Stores nurture lead data in static data for scheduled nurture emailer\n * 5. Builds Zoho API payloads for tag updates\n *\n * All emails sent via Resend — no Zoho Cadences used.\n *\n * Input:  Full submit payload with email, gatekeeper_path, zoho_access_token\n * Output: Payload + branching decisions + Zoho API bodies for downstream HTTP nodes\n */\n\nconst data = $input.first().json;\nconst email = data.email || '';\nconst firstName = data.first_name || '';\nconst gatekeeperPath = data.gatekeeper_path || 'LITE';\nconst strategicGapScore = data.strategic_gap_score || 0;\nconst strategicPath = data.strategic_path || 'CLARIFY';\nconst leadInterestSummary = data.biggest_strategic_bet || '';\nconst zohoToken = data.zoho_access_token || null;\n\n// --- Check for existing partial record ---\nconst staticData = $getWorkflowStaticData('global');\nconst partialRecords = staticData.partial_records || {};\n\nlet hadPartialRecord = false;\nlet partialResumeId = null;\nlet previousSaveCount = 0;\n\nconst existingPartial = Object.entries(partialRecords).find(\n  ([, record]) => record.email === email\n);\n\nif (existingPartial) {\n  hadPartialRecord = true;\n  partialResumeId = existingPartial[0];\n  previousSaveCount = existingPartial[1].save_count || 1;\n\n  // Mark partial as completed in static data\n  partialRecords[partialResumeId].partial_status = 'completed';\n  partialRecords[partialResumeId].completed_at = new Date().toISOString();\n  partialRecords[partialResumeId].completed_source = 'full_submit';\n  staticData.partial_records = partialRecords;\n}\n\n// --- Determine Implementation Nurture track ---\nconst isPremium = gatekeeperPath === 'PREMIUM';\nconst nurtureTrack = isPremium ? 'PREMIUM' : 'LITE';\n\nconst nurtureConfig = isPremium\n  ? { email_count: 5, cadence_days: [0, 3, 5, 7, 10] }\n  : { email_count: 3, cadence_days: [0, 5, 7] };\n\n// --- Store nurture state for the scheduled nurture emailer ---\nif (!staticData.nurture_leads) staticData.nurture_leads = {};\nstaticData.nurture_leads[email] = {\n  email,\n  first_name: firstName,\n  last_name: data.last_name || '',\n  company_name: data.company_name || '',\n  gatekeeper_path: gatekeeperPath,\n  strategic_gap_score: strategicGapScore,\n  strategic_path: strategicPath,\n  biggest_strategic_bet: data.biggest_strategic_bet || '',\n  sunday_dread: data.sunday_dread || '',\n  fulcrum_priorities: data.fulcrum_priorities || '',\n  monthly_focus: data.monthly_focus || '',\n  engagement_readiness: data.engagement_readiness || '',\n  completed_at: new Date().toISOString(),\n  nurture_emails_sent: 0,\n  nurture_track: nurtureTrack,\n  cadence_days: nurtureConfig.cadence_days,\n  nurture_status: 'active',\n};\n\n// --- Zoho: Update lead with completion data ---\nconst zohoCompletionUpdate = {\n  data: [{\n    Email: email,\n    partial_status: 'completed',\n    Strategic_Gap_Score: strategicGapScore,\n    Gatekeeper_Path: gatekeeperPath,\n    Strategic_Path: strategicPath,\n    Lead_Interest_Summary: leadInterestSummary,\n    Tag: [\n      { name: 'Fulcrum' },\n      { name: 'Fulcrum_Completed_Assessm' },\n    ],\n  }],\n  duplicate_check_fields: ['Email'],\n};\n\n// --- Zoho: Remove Fulcrum_Partial_Submissio tag (if had partial) ---\nconst zohoTagRemoval = hadPartialRecord ? {\n  tags: [{ name: 'Fulcrum_Partial_Submissio' }],\n} : null;\n\nreturn [{\n  json: {\n    ...data,\n    completion_branching: {\n      had_partial_record: hadPartialRecord,\n      partial_resume_id: partialResumeId,\n      previous_save_count: previousSaveCount,\n      nurture_track: nurtureTrack,\n      nurture_config: nurtureConfig,\n      is_premium: isPremium,\n      actions: {\n        update_partial_status: hadPartialRecord,\n        apply_completed_tag: true,\n        remove_partial_tag: hadPartialRecord,\n        start_nurture: true,\n      },\n    },\n\n    // Zoho API bodies for downstream HTTP Request nodes\n    zoho_completion_update: zohoCompletionUpdate,\n    zoho_tag_removal: zohoTagRemoval,\n\n    // For Implementation Nurture — email 0 sent immediately\n    _nurture_email_index: 0,\n  }\n}];\n"
+      },
+      "id": "completion-branching",
+      "name": "07 — Completion Branching",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        2840,
+        300
+      ],
+      "typeVersion": 1,
+      "notesInFlow": true,
+      "notes": "State machine: marks partial as completed, stores nurture state."
+    },
+    {
+      "parameters": {
+        "functionCode": "/**\n * n8n Function Node: Prospect Email — Leverage Brief Delivery (via Resend)\n *\n * Builds the prospect-facing email that delivers the Leverage Brief PDF.\n * Uses \"mirrored\" language from the lead's Sunday Dread response.\n *\n * Structure:\n *   - Subject mirroring company name\n *   - Body that mirrors Sunday Dread pain domain\n *   - 3-bullet structure: Strategic insight → Mirrored pain → One action\n *   - Single Cyan CTA: \"Book a Fulcrum Strategy Session →\"\n *   - PDF attached via Resend attachments\n *   - HMAC-signed unsubscribe link\n *\n * Input:  Full pipeline payload + pdf_base64 from PDF generation\n * Output: Resend email payload with attachment\n */\n\nconst crypto = require('crypto');\n\nconst data = $input.first().json;\nconst firstName = data.first_name || (data.name || '').split(' ')[0] || 'there';\nconst companyName = data.company_name || 'your company';\nconst email = data.email || '';\nconst sundayDread = data.sunday_dread || '';\nconst biggestBet = data.biggest_strategic_bet || '';\nconst monthlyFocus = data.monthly_focus || '';\nconst gatekeeperPath = data.gatekeeper_path || 'LITE';\nconst industry = data.enrichment?.industry || '';\n\nconst FROM_EMAIL = $env.RESEND_FROM_EMAIL || 'joe@fulcrumcollective.io';\nconst APP_URL = $env.APP_URL || 'https://leverage.fulcrumcollective.io';\nconst HMAC_SECRET = $env.HMAC_SECRET || 'fulcrum-dev-secret';\n\n// --- Mirror Analysis: Extract Pain Domain from Sunday Dread ---\nconst dreadLevel = parseInt(sundayDread.charAt(0)) || 3;\nlet painDomain = 'operational challenges';\nlet mirrorPhrase = '';\n\nif (dreadLevel >= 4) {\n  mirrorPhrase = `We know the weight of what you're carrying — you rated your weekly dread at a ${dreadLevel} out of 5.`;\n} else if (dreadLevel >= 3) {\n  mirrorPhrase = `You mentioned feeling a noticeable level of dread about the week ahead.`;\n} else {\n  mirrorPhrase = `Even though your week-to-week pressure is manageable, there are leverage points that can make it even smoother.`;\n}\n\n// Derive pain domain from other signals\nconst vacationTest = (data.vacation_test || '').toLowerCase();\nconst interruptions = (data.interruption_frequency || '').toLowerCase();\n\nif (interruptions.includes('constantly') || vacationTest.includes('break') || vacationTest.includes('bottleneck')) {\n  painDomain = 'being the operational bottleneck';\n} else if ((data.revenue_goal_gap || '').includes('Significant') || (data.revenue_goal_gap || '').includes('Critical')) {\n  painDomain = 'closing the gap to your revenue target';\n} else if ((data.team_confidence || '').includes('1') || (data.team_confidence || '').includes('2')) {\n  painDomain = 'aligning your leadership team on strategy';\n}\n\n// --- Build 3 Bullets ---\nconst bullet1 = biggestBet\n  ? `Your biggest strategic bet — <strong>${biggestBet.substring(0, 120)}</strong> — is a high-leverage move. Your Leverage Brief breaks down exactly how to de-risk it.`\n  : `Your Leverage Brief identifies the single highest-leverage priority for ${companyName} right now.`;\n\nconst bullet2 = `${mirrorPhrase} Your brief addresses <strong>${painDomain}</strong> head-on with a concrete action you can take this week.`;\n\nconst bullet3 = monthlyFocus\n  ? `Your #1 focus this month — <em>${monthlyFocus.substring(0, 100)}</em> — is woven into your recommended actions so everything compounds.`\n  : `Each action in your brief follows the Atomic Monday Rule: something you can start at 9 AM with a clear deliverable by lunch.`;\n\nconst bookingUrl = 'https://cal.com/fulcrumcollective/discovery-call';\n\n// --- Unsubscribe link ---\nconst unsubToken = crypto\n  .createHmac('sha256', HMAC_SECRET)\n  .update(email.toLowerCase())\n  .digest('hex')\n  .substring(0, 16);\nconst unsubUrl = `${APP_URL}/api/drip/stop?email=${encodeURIComponent(email)}&token=${unsubToken}`;\n\n// --- HTML Email ---\nconst html = `<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"></head>\n<body style=\"font-family: Arial, Helvetica, sans-serif; background: #F7F5F2; color: #000000; padding: 40px 20px; margin: 0;\">\n  <div style=\"max-width: 580px; margin: 0 auto; background: #F7F5F2;\">\n\n    <!-- Logo -->\n    <div style=\"margin-bottom: 24px;\">\n      <a href=\"https://www.fulcrumcollective.io\"><img src=\"https://fulcrumcollective.io/wp-content/uploads/2026/03/Fulcrum-Logo.png\" alt=\"Fulcrum Collective\" width=\"150\" style=\"width: 150px; height: auto; display: block;\" /></a>\n    </div>\n\n    <!-- Header -->\n    <div style=\"border-bottom: 3px solid #27E7FE; padding-bottom: 16px; margin-bottom: 28px;\">\n      <h1 style=\"font-size: 24px; font-weight: 700; margin: 0 0 4px;\">Your Leverage Brief is Ready</h1>\n      <p style=\"font-size: 14px; color: #666; margin: 0;\">Strategic Assessment for ${companyName}</p>\n    </div>\n\n    <!-- Greeting + Mirror -->\n    <p style=\"font-size: 16px; line-height: 1.6;\">${firstName},</p>\n    <p style=\"font-size: 16px; line-height: 1.6;\">\n      Your personalized Leverage Brief is attached. Here's what it reveals about ${companyName}:\n    </p>\n\n    <!-- 3-Bullet Structure -->\n    <div style=\"margin: 24px 0;\">\n      <div style=\"border-left: 4px solid #27E7FE; padding: 12px 16px; margin-bottom: 12px; background: rgba(39,231,254,0.05); border-radius: 0 6px 6px 0;\">\n        <p style=\"margin: 0; font-size: 14px; line-height: 1.6;\">${bullet1}</p>\n      </div>\n      <div style=\"border-left: 4px solid #27E7FE; padding: 12px 16px; margin-bottom: 12px; background: rgba(39,231,254,0.05); border-radius: 0 6px 6px 0;\">\n        <p style=\"margin: 0; font-size: 14px; line-height: 1.6;\">${bullet2}</p>\n      </div>\n      <div style=\"border-left: 4px solid #27E7FE; padding: 12px 16px; margin-bottom: 12px; background: rgba(39,231,254,0.05); border-radius: 0 6px 6px 0;\">\n        <p style=\"margin: 0; font-size: 14px; line-height: 1.6;\">${bullet3}</p>\n      </div>\n    </div>\n\n    <!-- CTA -->\n    <div style=\"text-align: center; margin: 32px 0;\">\n      <a href=\"${bookingUrl}\" style=\"display: inline-block; background: #27E7FE; color: #000000; font-weight: 700; padding: 14px 36px; border-radius: 8px; text-decoration: none; font-size: 16px;\">\n        Book a Fulcrum Strategy Session &rarr;\n      </a>\n    </div>\n\n    <!-- Fulcrum Support -->\n    <div style=\"background: #fff; border: 1px solid #e0ddd8; border-radius: 8px; padding: 20px; margin-top: 28px;\">\n      <h3 style=\"font-size: 14px; font-weight: 700; margin: 0 0 8px;\">Fulcrum Support</h3>\n      <p style=\"font-size: 13px; color: #555; line-height: 1.5; margin: 0;\">\n        Questions about your Leverage Brief? Reply to this email — our team reads every response.\n        If you'd like to discuss your strategic priorities in more depth, book a complimentary\n        Fulcrum Strategy Session and we'll walk through your brief together.\n      </p>\n    </div>\n\n    <!-- Footer -->\n    <div style=\"margin-top: 32px; padding-top: 16px; border-top: 1px solid #e0ddd8;\">\n      <p style=\"font-size: 11px; color: #aaa; margin: 0;\">\n        Fulcrum Collective &middot;\n        <a href=\"${unsubUrl}\" style=\"color: #aaa;\">Unsubscribe</a>\n      </p>\n    </div>\n\n  </div>\n</body>\n</html>`;\n\n// --- Build Resend payload with PDF attachment ---\nconst pdfBase64 = data.pdf_base64 || '';\nconst attachments = pdfBase64 ? [{\n  filename: `Leverage-Brief-${companyName.replace(/[^a-zA-Z0-9]/g, '-')}.pdf`,\n  content: pdfBase64,\n}] : [];\n\nconst resendPayload = {\n  from: FROM_EMAIL,\n  to: email,\n  reply_to: 'joe@fulcrumcollective.io',\n  subject: `Your Leverage Brief: ${companyName} Roadmap`,\n  html,\n  attachments,\n};\n\nreturn [{\n  json: {\n    resend_payload: resendPayload,\n    // Pass through for downstream nodes\n    ...data,\n  }\n}];\n"
+      },
+      "id": "prospect-email",
+      "name": "08 — Prospect Email (PDF Delivery)",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        3060,
+        140
+      ],
+      "typeVersion": 1,
+      "notesInFlow": true,
+      "notes": "Builds Resend payload with PDF attachment for the lead."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.RESEND_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.resend_payload) }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "resend-prospect",
+      "name": "Resend: Prospect Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        3280,
+        140
+      ],
+      "typeVersion": 4,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "functionCode": "/**\n * n8n Function Node: Admin God-View Email (via Resend)\n *\n * Internal admin notification with full Lead DNA, strategic hooks,\n * scores, engagement readiness, and Zoho deep link.\n * PDF attached via Resend attachments.\n *\n * Input:  Full pipeline payload + pdf_base64\n * Output: Resend email payload (admin notification)\n */\n\nconst data = $input.first().json;\nconst firstName = data.first_name || '';\nconst lastName = data.last_name || '';\nconst name = [firstName, lastName].filter(Boolean).join(' ') || data.name || 'Unknown';\nconst email = data.email || '';\nconst companyName = data.company_name || 'Unknown';\nconst companyUrl = data.company_url || '';\nconst linkedinUrl = data.enrichment?.linkedin_url || 'Not available';\nconst headcount = data.enrichment?.headcount || 'N/A';\nconst annualRevenue = data.enrichment?.annual_revenue || 0;\nconst industry = data.enrichment?.industry || 'Unknown';\nconst sundayDread = data.sunday_dread || 'Not provided';\nconst biggestBet = data.biggest_strategic_bet || 'Not provided';\nconst strategicGapScore = data.strategic_gap_score || 0;\nconst gatekeeperPath = data.gatekeeper_path || 'LITE';\nconst strategicPath = data.strategic_path || 'CLARIFY';\nconst engagementReadiness = data.engagement_readiness || '';\n\nconst FROM_EMAIL = $env.RESEND_FROM_EMAIL || 'joe@fulcrumcollective.io';\nconst ADMIN_EMAIL = 'joe@fulcrumcollective.io';\n\nconst revenueFormatted = annualRevenue\n  ? `$${Number(annualRevenue).toLocaleString()}`\n  : 'Not available';\n\n// Zoho deep link\nconst zohoDeepLink = `https://crm.zoho.com/crm/org/tab/Leads?searchText=${encodeURIComponent(email)}`;\n\n// Engagement readiness mapping\nconst readinessMap = {\n  now: { label: 'HOT — Needs guidance now', color: '#dc3545' },\n  '30_days': { label: 'WARM — Within 30 days', color: '#fd7e14' },\n  next_quarter: { label: 'COOL — Next quarter', color: '#0dcaf0' },\n  just_looking: { label: 'COLD — Just curious', color: '#6c757d' },\n};\nconst readiness = readinessMap[engagementReadiness] || { label: 'Not specified', color: '#6c757d' };\n\nconst gapColor = strategicGapScore > 7 ? '#e74c3c' : strategicGapScore > 4 ? '#f39c12' : '#27ae60';\n\n// --- HTML Email ---\nconst html = `<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"></head>\n<body style=\"font-family: Arial, Helvetica, sans-serif; background: #f8f8f8; color: #000; padding: 20px; margin: 0;\">\n  <div style=\"max-width: 640px; margin: 0 auto; background: #fff; border-radius: 8px; border: 1px solid #e0e0e0; overflow: hidden;\">\n\n    <!-- Header Bar -->\n    <div style=\"background: #000; color: #fff; padding: 16px 24px;\">\n      <h1 style=\"margin: 0; font-size: 18px; font-weight: 700;\">\n        NEW HIGH-VALUE LEAD: ${companyName}\n      </h1>\n    </div>\n\n    <div style=\"padding: 24px;\">\n\n      <!-- Readiness Badge -->\n      <div style=\"margin-bottom: 16px;\">\n        <span style=\"display: inline-block; background: ${readiness.color}; color: #fff; font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 4px;\">${readiness.label}</span>\n      </div>\n\n      <!-- Lead DNA -->\n      <h2 style=\"font-size: 14px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 12px; border-bottom: 1px solid #eee; padding-bottom: 8px;\">Lead DNA</h2>\n      <table style=\"width: 100%; font-size: 14px; border-collapse: collapse; margin-bottom: 20px;\">\n        <tr><td style=\"padding: 4px 8px; color: #666; width: 140px;\">Name</td><td style=\"padding: 4px 8px; font-weight: 600;\">${name}</td></tr>\n        <tr><td style=\"padding: 4px 8px; color: #666;\">Email</td><td style=\"padding: 4px 8px;\"><a href=\"mailto:${email}\" style=\"color: #27E7FE;\">${email}</a></td></tr>\n        <tr><td style=\"padding: 4px 8px; color: #666;\">Company</td><td style=\"padding: 4px 8px; font-weight: 600;\">${companyName}</td></tr>\n        <tr><td style=\"padding: 4px 8px; color: #666;\">Website</td><td style=\"padding: 4px 8px;\"><a href=\"${companyUrl}\" style=\"color: #27E7FE;\">${companyUrl}</a></td></tr>\n        <tr><td style=\"padding: 4px 8px; color: #666;\">LinkedIn</td><td style=\"padding: 4px 8px;\"><a href=\"${linkedinUrl}\" style=\"color: #27E7FE;\">${linkedinUrl}</a></td></tr>\n        <tr><td style=\"padding: 4px 8px; color: #666;\">Headcount</td><td style=\"padding: 4px 8px;\">${headcount}</td></tr>\n        <tr><td style=\"padding: 4px 8px; color: #666;\">ARR</td><td style=\"padding: 4px 8px;\">${revenueFormatted}</td></tr>\n        <tr><td style=\"padding: 4px 8px; color: #666;\">Industry</td><td style=\"padding: 4px 8px;\">${industry}</td></tr>\n        <tr><td style=\"padding: 4px 8px; color: #666;\">Readiness</td><td style=\"padding: 4px 8px; font-weight: 600;\">${readiness.label}</td></tr>\n      </table>\n\n      <!-- Strategic Hook -->\n      <h2 style=\"font-size: 14px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 12px; border-bottom: 1px solid #eee; padding-bottom: 8px;\">Strategic Hook</h2>\n      <div style=\"margin-bottom: 20px;\">\n        <div style=\"background: #fff5f5; border-left: 4px solid #e74c3c; padding: 12px 16px; margin-bottom: 8px; border-radius: 0 4px 4px 0;\">\n          <p style=\"margin: 0; font-size: 12px; color: #888; text-transform: uppercase;\">Sunday Dread</p>\n          <p style=\"margin: 4px 0 0; font-size: 14px; font-weight: 700;\">${sundayDread}</p>\n        </div>\n        <div style=\"background: #f0f8ff; border-left: 4px solid #27E7FE; padding: 12px 16px; border-radius: 0 4px 4px 0;\">\n          <p style=\"margin: 0; font-size: 12px; color: #888; text-transform: uppercase;\">Biggest Strategic Bet</p>\n          <p style=\"margin: 4px 0 0; font-size: 14px; font-weight: 700;\">${biggestBet}</p>\n        </div>\n      </div>\n\n      <!-- Scores & Path -->\n      <h2 style=\"font-size: 14px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 12px; border-bottom: 1px solid #eee; padding-bottom: 8px;\">Scores & Path</h2>\n      <table style=\"width: 100%; font-size: 14px; border-collapse: collapse; margin-bottom: 20px;\">\n        <tr>\n          <td style=\"padding: 6px 8px; color: #666;\">Strategic Gap Score</td>\n          <td style=\"padding: 6px 8px;\"><span style=\"font-size: 20px; font-weight: 700; color: ${gapColor};\">${strategicGapScore}</span><span style=\"color: #aaa; font-size: 12px;\">/10</span></td>\n        </tr>\n        <tr>\n          <td style=\"padding: 6px 8px; color: #666;\">Gatekeeper Path</td>\n          <td style=\"padding: 6px 8px;\"><span style=\"background: ${gatekeeperPath === 'PREMIUM' ? '#27E7FE' : '#e0ddd8'}; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 12px;\">${gatekeeperPath}</span></td>\n        </tr>\n        <tr>\n          <td style=\"padding: 6px 8px; color: #666;\">Strategic Path</td>\n          <td style=\"padding: 6px 8px; font-weight: 600;\">${strategicPath}</td>\n        </tr>\n      </table>\n\n      <!-- CRM Link -->\n      <div style=\"text-align: center; margin: 24px 0 8px;\">\n        <a href=\"${zohoDeepLink}\" style=\"display: inline-block; background: #27E7FE; color: #000; font-weight: 700; padding: 12px 28px; border-radius: 6px; text-decoration: none; font-size: 14px;\">\n          View in Zoho CRM &rarr;\n        </a>\n      </div>\n\n    </div>\n  </div>\n</body>\n</html>`;\n\n// --- Attachment ---\nconst pdfBase64 = data.pdf_base64 || '';\nconst attachments = pdfBase64 ? [{\n  filename: `Leverage-Brief-${companyName.replace(/[^a-zA-Z0-9]/g, '-')}.pdf`,\n  content: pdfBase64,\n}] : [];\n\nconst resendPayload = {\n  from: FROM_EMAIL,\n  to: ADMIN_EMAIL,\n  reply_to: FROM_EMAIL,\n  subject: `[${readiness.label.split(' — ')[0]}] New Leverage Brief: ${name} — ${companyName}`,\n  html,\n  attachments,\n};\n\nreturn [{\n  json: {\n    resend_payload: resendPayload,\n    // Pass through for downstream high-gap check\n    strategic_gap_score: strategicGapScore,\n    company_name: companyName,\n    name,\n    email,\n    sunday_dread: sundayDread,\n    gatekeeper_path: gatekeeperPath,\n  }\n}];\n"
+      },
+      "id": "admin-godview",
+      "name": "09 — Admin God-View Email",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        3060,
+        300
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.RESEND_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.resend_payload) }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "resend-admin",
+      "name": "Resend: Admin Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        3280,
+        300
+      ],
+      "typeVersion": 4,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.strategic_gap_score }}",
+              "operation": "larger",
+              "value2": 7
+            }
+          ]
+        }
+      },
+      "id": "if-high-gap",
+      "name": "IF: High Gap Score > 7?",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        3500,
+        300
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "/**\n * n8n Function Node: High-Gap Slack + SMS Alert\n *\n * Fires when Strategic_Gap_Score > 7.0\n * Called from IF node downstream of Admin God-View.\n *\n * Output: Slack message payload (use n8n Slack node downstream)\n *         + optional SMS payload (use n8n Twilio/SMS node downstream)\n *\n * Input:  Pipeline data with strategic_gap_score, name, company_name, sunday_dread\n * Output: Formatted alert payloads\n */\n\nconst data = $input.first().json;\nconst name = data.name || 'Unknown';\nconst companyName = data.company_name || 'Unknown';\nconst email = data.email || '';\nconst strategicGapScore = data.strategic_gap_score || 0;\nconst sundayDread = data.sunday_dread || 'Not provided';\nconst gatekeeperPath = data.gatekeeper_path || 'LITE';\n\n// Truncate sunday dread for SMS\nconst dreadSummary = sundayDread.length > 80\n  ? sundayDread.substring(0, 77) + '...'\n  : sundayDread;\n\n// --- Slack Message ---\nconst slackMessage = {\n  channel: '#high-value-leads',\n  text: [\n    `*:rotating_light: HIGH-VALUE LEAD ALERT*`,\n    ``,\n    `*Name:* ${name}`,\n    `*Company:* ${companyName}`,\n    `*Email:* ${email}`,\n    `*Strategic Gap Score:* *${strategicGapScore}/10*`,\n    `*Gatekeeper Path:* ${gatekeeperPath}`,\n    `*Sunday Dread:* _\"${dreadSummary}\"_`,\n    ``,\n    `> This lead scored above 7.0 — high probability of engagement. Prioritize outreach.`,\n  ].join('\\n'),\n};\n\n// --- SMS Message (optional — for Twilio or similar) ---\nconst smsMessage = {\n  body: `[Fulcrum] HIGH-VALUE LEAD: ${name} at ${companyName}. Gap Score: ${strategicGapScore}/10. Sunday Dread: \"${dreadSummary}\". Check Slack #high-value-leads.`,\n  // To number configured in n8n credentials or env\n};\n\nreturn [{\n  json: {\n    slack: slackMessage,\n    sms: smsMessage,\n    // Pass through for any downstream nodes\n    name,\n    company_name: companyName,\n    email,\n    strategic_gap_score: strategicGapScore,\n  }\n}];\n"
+      },
+      "id": "slack-alert",
+      "name": "10 — Slack High-Gap Alert",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        3720,
+        300
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "functionCode": "/**\n * n8n Function Node: Implementation Nurture Email Builder (Branch B — Completed)\n *\n * Generates the correct nurture email based on:\n *   - gatekeeper_path (PREMIUM: 5 emails / LITE: 3 emails)\n *   - email_index (which email in the sequence, 0-based)\n *\n * Input:  Completed lead data + completion_branching config\n * Output: Postmark payload for the current nurture email\n *\n * Downstream: Use n8n Wait nodes to space emails at the correct cadence.\n *   PREMIUM: Day 0, 3, 5, 7, 10\n *   LITE:    Day 0, 5, 7\n */\n\nconst crypto = require('crypto');\n\nconst lead = $input.first().json;\nconst email = lead.email || '';\nconst firstName = lead.first_name || (lead.name || '').split(' ')[0] || 'there';\nconst companyName = lead.company_name || 'your company';\nconst gatekeeperPath = lead.gatekeeper_path || 'LITE';\nconst strategicGapScore = lead.strategic_gap_score || 0;\nconst leadInterestSummary = lead.biggest_strategic_bet || lead.Lead_Interest_Summary || '';\nconst sundayDread = lead.sunday_dread || '';\nconst fulcrumPriorities = lead.fulcrum_priorities || '';\nconst monthlyFocus = lead.monthly_focus || '';\n\nconst emailIndex = lead._nurture_email_index || 0;\n\nconst bookingUrl = 'https://cal.com/fulcrumcollective/discovery-call';\nconst FROM_EMAIL = $env.RESEND_FROM_EMAIL || 'joe@fulcrumcollective.io';\nconst APP_URL = $env.APP_URL || 'https://leverage.fulcrumcollective.io';\nconst HMAC_SECRET = $env.HMAC_SECRET || 'fulcrum-dev-secret';\n\n// Build unsubscribe link\nconst unsubToken = crypto\n  .createHmac('sha256', HMAC_SECRET)\n  .update(email.toLowerCase())\n  .digest('hex')\n  .substring(0, 16);\nconst unsubUrl = `${APP_URL}/api/drip/stop?email=${encodeURIComponent(email)}&token=${unsubToken}`;\n\n// --- PREMIUM TRACK: 5 emails ---\nconst premiumEmails = [\n  // Email 1 — Day 0: Recap + key actions\n  {\n    Subject: `Your Leverage Brief: Key Actions for ${companyName}`,\n    buildHtml: () => wrapHtml(`\n      <h2 style=\"font-size: 22px; margin-bottom: 16px;\">Your strategic priorities are ready, ${firstName}</h2>\n      <p>Based on your Fulcrum Assessment, here are the areas that matter most for <strong>${companyName}</strong> right now:</p>\n      <div style=\"background: #fff; border-left: 4px solid #27E7FE; padding: 16px 20px; margin: 20px 0; border-radius: 4px;\">\n        <p style=\"margin: 0; font-weight: 600;\">Your Biggest Strategic Bet:</p>\n        <p style=\"margin: 8px 0 0;\">${leadInterestSummary || 'See your attached Leverage Brief for details.'}</p>\n      </div>\n      ${fulcrumPriorities ? `<p><strong>Your Fulcrum Priorities:</strong><br/>${fulcrumPriorities.replace(/\\n/g, '<br/>')}</p>` : ''}\n      <p>Your Leverage Brief PDF has the full breakdown. Start with your #1 priority this week.</p>\n      ${ctaButton('Review Your Full Brief', bookingUrl)}\n    `),\n    buildText: () => `Your strategic priorities are ready, ${firstName}\\n\\nYour Biggest Strategic Bet: ${leadInterestSummary}\\n\\nYour Fulcrum Priorities:\\n${fulcrumPriorities}\\n\\nStart with your #1 priority this week.\\n\\nBook a Strategy Session: ${bookingUrl}`,\n  },\n  // Email 2 — Day 3: Implementation guidance\n  {\n    Subject: `Putting your Leverage Brief into action, ${firstName}`,\n    buildHtml: () => wrapHtml(`\n      <h2 style=\"font-size: 22px; margin-bottom: 16px;\">From insight to execution</h2>\n      <p>${firstName}, your Leverage Brief identified key leverage points for <strong>${companyName}</strong>. Here's how to turn them into action this week:</p>\n      <ol style=\"line-height: 1.8;\">\n        <li><strong>Block 90 minutes</strong> — review your brief with your leadership team</li>\n        <li><strong>Pick one priority</strong> — the one that unlocks the most downstream progress</li>\n        <li><strong>Assign an owner and a deadline</strong> — accountability turns plans into outcomes</li>\n      </ol>\n      ${strategicGapScore > 5 ? '<p>Your strategic gap score suggests there\\'s significant room to accelerate. The sooner you act, the faster you close that gap.</p>' : ''}\n      ${ctaButton('Book a Fulcrum Strategy Session', bookingUrl)}\n    `),\n    buildText: () => `From insight to execution\\n\\n${firstName}, here's how to act on your Leverage Brief this week:\\n\\n1. Block 90 minutes — review your brief with your leadership team\\n2. Pick one priority — the one that unlocks the most downstream progress\\n3. Assign an owner and a deadline\\n\\nBook a Strategy Session: ${bookingUrl}`,\n  },\n  // Email 3 — Day 5: Strategic depth\n  {\n    Subject: `The gap between where you are and where you need to be`,\n    buildHtml: () => wrapHtml(`\n      <h2 style=\"font-size: 22px; margin-bottom: 16px;\">Closing the strategic gap</h2>\n      <p>${firstName}, leaders at companies like <strong>${companyName}</strong> often tell us the same thing: they know where they need to go, but the gap between vision and execution is where things stall.</p>\n      ${sundayDread ? `<p>You mentioned feeling <em>\"${sundayDread}\"</em> about the week ahead. That's a signal — not a character flaw. It means your systems aren't carrying the load they should.</p>` : ''}\n      <p>The Fulcrum Method is designed to close that gap — not with more meetings, but with sharper priorities and clearer ownership.</p>\n      ${ctaButton('Let\\'s Talk Strategy', bookingUrl)}\n    `),\n    buildText: () => `Closing the strategic gap\\n\\n${firstName}, the gap between vision and execution is where things stall.\\n\\n${sundayDread ? `You mentioned feeling \"${sundayDread}\" about the week ahead. That's a signal.\\n\\n` : ''}The Fulcrum Method closes that gap with sharper priorities and clearer ownership.\\n\\nBook a Strategy Session: ${bookingUrl}`,\n  },\n  // Email 4 — Day 7: Social proof / positioning\n  {\n    Subject: `How leaders like you are using the Fulcrum Method`,\n    buildHtml: () => wrapHtml(`\n      <h2 style=\"font-size: 22px; margin-bottom: 16px;\">You're not alone in this, ${firstName}</h2>\n      <p>Leaders across industries are using the Fulcrum Strategic Architecture to transform how their teams execute. Here's what they have in common:</p>\n      <ul style=\"line-height: 1.8;\">\n        <li>They stopped trying to fix everything at once</li>\n        <li>They identified their single highest-leverage priority</li>\n        <li>They built a Fulcrum Rhythm Meeting cadence that keeps the team aligned</li>\n      </ul>\n      <p>Fulcrum Collective helps leaders like you implement the Fulcrum Method — from your first priority through full strategic architecture.</p>\n      ${ctaButton('Book a Fulcrum Strategy Session', bookingUrl)}\n    `),\n    buildText: () => `You're not alone in this, ${firstName}\\n\\nLeaders are using the Fulcrum Strategic Architecture to transform execution.\\n\\nFulcrum Collective helps leaders implement the Fulcrum Method.\\n\\nBook a Strategy Session: ${bookingUrl}`,\n  },\n  // Email 5 — Day 10: Final CTA\n  {\n    Subject: `${firstName}, ready to move forward?`,\n    buildHtml: () => wrapHtml(`\n      <h2 style=\"font-size: 22px; margin-bottom: 16px;\">The next step is yours</h2>\n      <p>${firstName}, your Leverage Brief gave you clarity. The question now is: what will you do with it?</p>\n      <p>If you're ready to turn your strategic priorities into a 90-day execution plan, a Fulcrum Strategy Session is the fastest path.</p>\n      <p>It's a focused conversation — no pitch, no pressure. Just a clear-eyed look at where <strong>${companyName}</strong> stands and what to do next.</p>\n      ${ctaButton('Book Your Strategy Session', bookingUrl)}\n    `),\n    buildText: () => `The next step is yours\\n\\n${firstName}, your Leverage Brief gave you clarity. Ready to turn it into a 90-day execution plan?\\n\\nBook Your Strategy Session: ${bookingUrl}`,\n  },\n];\n\n// --- LITE TRACK: 3 emails ---\nconst liteEmails = [\n  // Email 1 — Day 0\n  premiumEmails[0],\n  // Email 2 — Day 5\n  {\n    Subject: `Quick wins from your Leverage Brief, ${firstName}`,\n    buildHtml: () => wrapHtml(`\n      <h2 style=\"font-size: 22px; margin-bottom: 16px;\">Start with these quick wins</h2>\n      <p>${firstName}, even small moves in the right direction create momentum. Based on your assessment for <strong>${companyName}</strong>:</p>\n      <ol style=\"line-height: 1.8;\">\n        <li><strong>This week:</strong> Share your #1 Fulcrum Priority with your team</li>\n        <li><strong>This month:</strong> ${monthlyFocus || 'Focus on the single outcome that moves the needle most'}</li>\n        <li><strong>This quarter:</strong> Revisit your priorities and measure progress</li>\n      </ol>\n      <p>Want help building a full execution roadmap? We're here.</p>\n      ${ctaButton('Book a Fulcrum Strategy Session', bookingUrl)}\n    `),\n    buildText: () => `Quick wins from your Leverage Brief\\n\\n1. This week: Share your #1 Fulcrum Priority\\n2. This month: ${monthlyFocus || 'Focus on the single most important outcome'}\\n3. This quarter: Revisit and measure\\n\\nBook a Strategy Session: ${bookingUrl}`,\n  },\n  // Email 3 — Day 7\n  premiumEmails[4], // Reuse \"ready to move forward\" final CTA\n];\n\nconst track = gatekeeperPath === 'PREMIUM' ? premiumEmails : liteEmails;\nconst currentEmail = track[emailIndex];\n\nif (!currentEmail) {\n  return [{ json: { nurture_complete: true, no_more_emails: true } }];\n}\n\nreturn [{\n  json: {\n    resend_payload: {\n      from: FROM_EMAIL,\n      to: email,\n      reply_to: 'joe@fulcrumcollective.io',\n      subject: currentEmail.Subject,\n      html: currentEmail.buildHtml(),\n    },\n    _nurture_email_index: emailIndex,\n    _nurture_track: gatekeeperPath,\n  }\n}];\n\n// --- Helpers ---\n\nfunction ctaButton(text, url) {\n  return `\n    <div style=\"text-align: center; margin: 32px 0;\">\n      <a href=\"${url}\" style=\"display: inline-block; background: #27E7FE; color: #000; font-weight: 600; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px;\">\n        ${text} &rarr;\n      </a>\n    </div>`;\n}\n\nfunction wrapHtml(content) {\n  return `\n<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"></head>\n<body style=\"font-family: Arial, Helvetica, sans-serif; background: #F7F5F2; color: #000; padding: 40px 20px;\">\n  <div style=\"max-width: 560px; margin: 0 auto;\">\n    <div style=\"margin-bottom: 24px;\">\n      <a href=\"https://www.fulcrumcollective.io\"><img src=\"https://fulcrumcollective.io/wp-content/uploads/2026/03/Fulcrum-Logo.png\" alt=\"Fulcrum Collective\" width=\"120\" style=\"width: 120px; height: auto;\" /></a>\n    </div>\n    ${content}\n    <div style=\"margin-top: 32px; padding-top: 16px; border-top: 1px solid #e0ddd8;\">\n      <p style=\"font-size: 11px; color: #aaa;\">\n        Fulcrum Collective &middot;\n        <a href=\"${unsubUrl}\" style=\"color: #aaa;\">Unsubscribe</a>\n      </p>\n    </div>\n  </div>\n</body>\n</html>`.trim();\n}\n"
+      },
+      "id": "nurture-email-0",
+      "name": "11 — Nurture Email 0 (Immediate)",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        3060,
+        460
+      ],
+      "typeVersion": 1,
+      "notesInFlow": true,
+      "notes": "Implementation nurture email 0 — sent immediately after completion."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.RESEND_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.resend_payload) }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "resend-nurture-0",
+      "name": "Resend: Nurture Email 0",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        3280,
+        460
+      ],
+      "typeVersion": 4,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Log final pipeline result\nconst data = $input.first().json;\nconsole.log(`Pipeline complete: ${data.email} | Gap: ${data.strategic_gap_score} | Path: ${data.gatekeeper_path}`);\nreturn [{ json: { pipeline_complete: true, timestamp: new Date().toISOString() } }];"
+      },
+      "id": "pipeline-log",
+      "name": "12 — Pipeline Complete Log",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        3500,
+        460
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "id": "schedule-nurture",
+      "name": "Schedule: Nurture Check (6h)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [
+        200,
+        700
+      ],
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": {
+        "functionCode": "/**\n * n8n Function Node: Implementation Nurture Check + Send via Resend\n *\n * Called by n8n Schedule Trigger (runs every 6 hours).\n * Iterates nurture_leads in static data and checks if nurture emails need sending.\n *\n * PREMIUM cadence: Day 0, 3, 5, 7, 10 (5 emails)\n * LITE cadence:    Day 0, 5, 7 (3 emails)\n *\n * Email 0 is sent immediately by the main pipeline (not this node).\n * This node handles emails 1+ based on timing.\n *\n * STOP CONDITIONS:\n *   1. All emails in cadence sent → mark nurture_status = 'completed'\n *   2. Lead unsubscribed (in stopped_emails)\n *   3. 30 days elapsed → mark nurture_status = 'expired'\n *\n * Input:  Triggered by schedule. No upstream data needed.\n * Output: Array of Resend email payloads to send\n */\n\nconst crypto = require('crypto');\n\nconst staticData = $getWorkflowStaticData('global');\nconst nurtureLeads = staticData.nurture_leads || {};\nconst stoppedEmails = staticData.stopped_emails || {};\nconst now = Date.now();\nconst DAY = 86400000;\n\nconst HMAC_SECRET = $env.HMAC_SECRET || 'fulcrum-dev-secret';\nconst APP_URL = $env.APP_URL || 'https://leverage.fulcrumcollective.io';\nconst FROM_EMAIL = $env.RESEND_FROM_EMAIL || 'joe@fulcrumcollective.io';\n\nconst emailsToSend = [];\n\nfor (const [email, lead] of Object.entries(nurtureLeads)) {\n  if (lead.nurture_status !== 'active') continue;\n\n  // Check stop list\n  if (stoppedEmails[email]) {\n    nurtureLeads[email].nurture_status = 'unsubscribed';\n    continue;\n  }\n\n  const completedAt = new Date(lead.completed_at).getTime();\n  const daysSinceCompleted = (now - completedAt) / DAY;\n\n  // Expire after 30 days\n  if (daysSinceCompleted > 30) {\n    nurtureLeads[email].nurture_status = 'expired';\n    continue;\n  }\n\n  const sent = lead.nurture_emails_sent || 0;\n  const cadence = lead.cadence_days || [0, 5, 7];\n\n  // Email 0 is sent by main pipeline, so we look at index = sent\n  if (sent >= cadence.length) {\n    nurtureLeads[email].nurture_status = 'completed';\n    continue;\n  }\n\n  // Check if it's time for the next email\n  const nextDay = cadence[sent];\n  if (daysSinceCompleted < nextDay) continue;\n\n  // --- Build unsubscribe link ---\n  const unsubToken = crypto\n    .createHmac('sha256', HMAC_SECRET)\n    .update(email.toLowerCase())\n    .digest('hex')\n    .substring(0, 16);\n  const unsubUrl = `${APP_URL}/api/drip/stop?email=${encodeURIComponent(email)}&token=${unsubToken}`;\n\n  const bookingUrl = 'https://cal.com/fulcrumcollective/discovery-call';\n\n  // --- Build email based on track + index ---\n  const emailContent = buildNurtureEmail(lead, sent, unsubUrl, bookingUrl);\n  if (!emailContent) continue;\n\n  emailsToSend.push({\n    email,\n    resend_payload: {\n      from: FROM_EMAIL,\n      to: email,\n      reply_to: 'joe@fulcrumcollective.io',\n      subject: emailContent.subject,\n      html: emailContent.html,\n    },\n  });\n\n  nurtureLeads[email].nurture_emails_sent = sent + 1;\n  nurtureLeads[email][`nurture_${sent + 1}_sent_at`] = new Date().toISOString();\n}\n\n// Persist\nstaticData.nurture_leads = nurtureLeads;\n\nif (emailsToSend.length === 0) {\n  return [{ json: { no_emails: true, leads_scanned: Object.keys(nurtureLeads).length } }];\n}\n\nreturn emailsToSend.map(e => ({ json: e }));\n\n// ═══════════════════════════════════════════════\n// NURTURE EMAIL TEMPLATES\n// ═══════════════════════════════════════════════\n\nfunction wrapHtml(bodyHtml, unsubUrl) {\n  return `<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"></head>\n<body style=\"font-family: Arial, Helvetica, sans-serif; background: #F7F5F2; color: #000; padding: 40px 20px;\">\n  <div style=\"max-width: 560px; margin: 0 auto;\">\n    <div style=\"margin-bottom: 24px;\">\n      <a href=\"https://www.fulcrumcollective.io\"><img src=\"https://fulcrumcollective.io/wp-content/uploads/2026/03/Fulcrum-Logo.png\" alt=\"Fulcrum Collective\" width=\"120\" style=\"width: 120px; height: auto;\" /></a>\n    </div>\n    ${bodyHtml}\n    <div style=\"margin-top: 32px; padding-top: 16px; border-top: 1px solid #e0ddd8;\">\n      <p style=\"font-size: 11px; color: #aaa;\">\n        Fulcrum Collective &middot;\n        <a href=\"${unsubUrl}\" style=\"color: #aaa;\">Unsubscribe</a>\n      </p>\n    </div>\n  </div>\n</body>\n</html>`;\n}\n\nfunction buildNurtureEmail(lead, index, unsubUrl, bookingUrl) {\n  const name = lead.first_name || 'there';\n  const company = lead.company_name || 'your company';\n  const track = lead.nurture_track || 'LITE';\n\n  // PREMIUM emails: indices 0-4 (but 0 is sent by pipeline, so this sees 1-4)\n  // LITE emails: indices 0-2 (0 sent by pipeline, so 1-2)\n  // The index passed here is 0-based from nurture_emails_sent count\n\n  if (track === 'PREMIUM') {\n    return buildPremiumEmail(index, name, company, lead, unsubUrl, bookingUrl);\n  } else {\n    return buildLiteEmail(index, name, company, lead, unsubUrl, bookingUrl);\n  }\n}\n\nfunction buildPremiumEmail(index, name, company, lead, unsubUrl, bookingUrl) {\n  switch (index) {\n    case 0: // Day 0 — Recap (sent by pipeline via implementation-nurture.js)\n      return buildRecapEmail(name, company, lead, unsubUrl);\n    case 1: // Day 3 — Implementation guidance\n      return {\n        subject: `Your 3-step action plan, ${name}`,\n        html: wrapHtml(`\n          <h2 style=\"font-size: 22px; margin-bottom: 16px;\">Turning your Leverage Brief into action</h2>\n          <p style=\"font-size: 16px; line-height: 1.6; color: #333;\">${name},</p>\n          <p style=\"font-size: 16px; line-height: 1.6; color: #333;\">\n            Your Leverage Brief identified key priorities for <strong>${company}</strong>.\n            Here's how to start moving on them this week:\n          </p>\n          <div style=\"border-left: 4px solid #27E7FE; padding: 12px 16px; margin: 24px 0; background: rgba(39,231,254,0.05); border-radius: 0 6px 6px 0;\">\n            <p style=\"margin: 0 0 8px; font-weight: 700;\">The Atomic Monday Rule:</p>\n            <p style=\"margin: 0; font-size: 14px; line-height: 1.6;\">\n              Pick ONE action from your brief. Start it Monday at 9 AM. Have a deliverable by lunch.\n              That's it. One compounding action per week beats a quarterly planning retreat every time.\n            </p>\n          </div>\n          ${lead.fulcrum_priorities ? `<p style=\"font-size: 16px; line-height: 1.6; color: #333;\">Your stated priorities — <em>${lead.fulcrum_priorities.substring(0, 120)}</em> — are the right starting point.</p>` : ''}\n          <div style=\"text-align: center; margin: 32px 0;\">\n            <a href=\"${bookingUrl}\" style=\"display: inline-block; background: #27E7FE; color: #000; font-weight: 600; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px;\">\n              Walk Through My Brief &rarr;\n            </a>\n          </div>\n          <p style=\"font-size: 14px; color: #666;\"><strong>Questions?</strong> Reply to this email — our team reads every response.</p>\n        `, unsubUrl),\n      };\n    case 2: // Day 5 — Strategic depth\n      return {\n        subject: `The gap between where you are and where you're going, ${name}`,\n        html: wrapHtml(`\n          <h2 style=\"font-size: 22px; margin-bottom: 16px;\">Closing the strategic gap</h2>\n          <p style=\"font-size: 16px; line-height: 1.6; color: #333;\">${name},</p>\n          ${lead.sunday_dread ? `<p style=\"font-size: 16px; line-height: 1.6; color: #333;\">You mentioned that your Sunday dread level sits at <strong>${lead.sunday_dread.substring(0, 80)}</strong>. That's a signal worth paying attention to.</p>` : ''}\n          <p style=\"font-size: 16px; line-height: 1.6; color: #333;\">\n            The Fulcrum Method works by finding the single highest-leverage point in your business\n            and applying focused pressure there. Your Leverage Brief already identified that point for\n            <strong>${company}</strong>.\n          </p>\n          <p style=\"font-size: 16px; line-height: 1.6; color: #333;\">\n            Most leaders try to fix everything at once. The ones who break through focus on\n            <strong>one fulcrum priority per quarter</strong>.\n          </p>\n          <div style=\"text-align: center; margin: 32px 0;\">\n            <a href=\"${bookingUrl}\" style=\"display: inline-block; background: #27E7FE; color: #000; font-weight: 600; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px;\">\n              Discuss My Fulcrum Priority &rarr;\n            </a>\n          </div>\n          <p style=\"font-size: 14px; color: #666;\"><strong>Questions?</strong> Reply to this email — we read every response.</p>\n        `, unsubUrl),\n      };\n    case 3: // Day 7 — Social proof + positioning\n      return {\n        subject: `How leaders like you use the Leverage Brief, ${name}`,\n        html: wrapHtml(`\n          <h2 style=\"font-size: 22px; margin-bottom: 16px;\">You're not alone in this</h2>\n          <p style=\"font-size: 16px; line-height: 1.6; color: #333;\">${name},</p>\n          <p style=\"font-size: 16px; line-height: 1.6; color: #333;\">\n            Leaders across industries have used the Leverage Brief to cut through noise and focus on\n            what actually moves the needle. Here's the pattern we see:\n          </p>\n          <div style=\"margin: 24px 0;\">\n            <p style=\"font-size: 14px; line-height: 1.8; color: #333;\"><strong>Week 1:</strong> Review the brief, pick one Atomic Monday action</p>\n            <p style=\"font-size: 14px; line-height: 1.8; color: #333;\"><strong>Week 2:</strong> Book a strategy session to align the team</p>\n            <p style=\"font-size: 14px; line-height: 1.8; color: #333;\"><strong>Week 3-4:</strong> See compounding momentum from focused execution</p>\n          </div>\n          ${lead.biggest_strategic_bet ? `<p style=\"font-size: 16px; line-height: 1.6; color: #333;\">Your biggest bet — <em>${lead.biggest_strategic_bet.substring(0, 120)}</em> — deserves this kind of focused attention.</p>` : ''}\n          <div style=\"text-align: center; margin: 32px 0;\">\n            <a href=\"${bookingUrl}\" style=\"display: inline-block; background: #27E7FE; color: #000; font-weight: 600; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px;\">\n              Book My Strategy Session &rarr;\n            </a>\n          </div>\n          <p style=\"font-size: 14px; color: #666;\"><strong>Questions?</strong> Reply to this email — we read every response.</p>\n        `, unsubUrl),\n      };\n    case 4: // Day 10 — Final CTA\n      return buildFinalCtaEmail(name, company, lead, unsubUrl, bookingUrl);\n    default:\n      return null;\n  }\n}\n\nfunction buildLiteEmail(index, name, company, lead, unsubUrl, bookingUrl) {\n  switch (index) {\n    case 0: // Day 0 — Recap (sent by pipeline)\n      return buildRecapEmail(name, company, lead, unsubUrl);\n    case 1: // Day 5 — Quick wins\n      return {\n        subject: `Quick wins for ${company} this week`,\n        html: wrapHtml(`\n          <h2 style=\"font-size: 22px; margin-bottom: 16px;\">Start small, compound fast</h2>\n          <p style=\"font-size: 16px; line-height: 1.6; color: #333;\">${name},</p>\n          <p style=\"font-size: 16px; line-height: 1.6; color: #333;\">\n            Your Leverage Brief outlined strategic priorities for <strong>${company}</strong>.\n            Here's how to build momentum right now:\n          </p>\n          <div style=\"margin: 24px 0;\">\n            <div style=\"border-left: 4px solid #27E7FE; padding: 8px 16px; margin-bottom: 8px;\">\n              <p style=\"margin: 0; font-size: 14px;\"><strong>This week:</strong> Pick one action from your brief and execute it Monday morning</p>\n            </div>\n            <div style=\"border-left: 4px solid #27E7FE; padding: 8px 16px; margin-bottom: 8px;\">\n              <p style=\"margin: 0; font-size: 14px;\"><strong>This month:</strong> ${lead.monthly_focus ? lead.monthly_focus.substring(0, 100) : 'Focus on your top fulcrum priority'}</p>\n            </div>\n            <div style=\"border-left: 4px solid #27E7FE; padding: 8px 16px;\">\n              <p style=\"margin: 0; font-size: 14px;\"><strong>This quarter:</strong> Revisit your brief and measure progress against your 3-year target</p>\n            </div>\n          </div>\n          <div style=\"text-align: center; margin: 32px 0;\">\n            <a href=\"${bookingUrl}\" style=\"display: inline-block; background: #27E7FE; color: #000; font-weight: 600; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px;\">\n              Get Expert Guidance &rarr;\n            </a>\n          </div>\n          <p style=\"font-size: 14px; color: #666;\"><strong>Questions?</strong> Reply to this email — we read every response.</p>\n        `, unsubUrl),\n      };\n    case 2: // Day 7 — Final CTA\n      return buildFinalCtaEmail(name, company, lead, unsubUrl, bookingUrl);\n    default:\n      return null;\n  }\n}\n\nfunction buildRecapEmail(name, company, lead, unsubUrl) {\n  return {\n    subject: `Your Leverage Brief key takeaways, ${name}`,\n    html: wrapHtml(`\n      <h2 style=\"font-size: 22px; margin-bottom: 16px;\">Your Leverage Brief at a glance</h2>\n      <p style=\"font-size: 16px; line-height: 1.6; color: #333;\">${name},</p>\n      <p style=\"font-size: 16px; line-height: 1.6; color: #333;\">\n        Here's a quick recap of what your Leverage Brief revealed about <strong>${company}</strong>:\n      </p>\n      <div style=\"margin: 24px 0;\">\n        ${lead.biggest_strategic_bet ? `<p style=\"font-size: 14px; line-height: 1.6; color: #333;\"><strong>Biggest strategic bet:</strong> ${lead.biggest_strategic_bet.substring(0, 150)}</p>` : ''}\n        ${lead.fulcrum_priorities ? `<p style=\"font-size: 14px; line-height: 1.6; color: #333;\"><strong>Fulcrum priorities:</strong> ${lead.fulcrum_priorities.substring(0, 150)}</p>` : ''}\n        <p style=\"font-size: 14px; line-height: 1.6; color: #333;\"><strong>Strategic gap score:</strong> ${lead.strategic_gap_score}/10</p>\n      </div>\n      <p style=\"font-size: 16px; line-height: 1.6; color: #333;\">\n        Open your attached Leverage Brief for the full breakdown and recommended actions.\n      </p>\n      <p style=\"font-size: 14px; color: #666;\"><strong>Questions?</strong> Reply to this email — we read every response.</p>\n    `, unsubUrl),\n  };\n}\n\nfunction buildFinalCtaEmail(name, company, lead, unsubUrl, bookingUrl) {\n  return {\n    subject: `Ready to move forward, ${name}?`,\n    html: wrapHtml(`\n      <h2 style=\"font-size: 22px; margin-bottom: 16px;\">One conversation could change everything</h2>\n      <p style=\"font-size: 16px; line-height: 1.6; color: #333;\">${name},</p>\n      <p style=\"font-size: 16px; line-height: 1.6; color: #333;\">\n        Your Leverage Brief gave you the map. A Fulcrum Strategy Session gives you the guide.\n      </p>\n      <p style=\"font-size: 16px; line-height: 1.6; color: #333;\">\n        In 30 minutes, we'll walk through your brief together, pressure-test your priorities,\n        and give you a clear next step for <strong>${company}</strong>.\n      </p>\n      <div style=\"border-left: 4px solid #27E7FE; padding: 12px 16px; margin: 24px 0; background: rgba(39,231,254,0.05); border-radius: 0 6px 6px 0;\">\n        <p style=\"margin: 0; font-size: 14px; line-height: 1.6;\">\n          No pitch. No pressure. Just a focused conversation about your business.\n        </p>\n      </div>\n      <div style=\"text-align: center; margin: 32px 0;\">\n        <a href=\"${bookingUrl}\" style=\"display: inline-block; background: #27E7FE; color: #000; font-weight: 600; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px;\">\n          Book My Free Strategy Session &rarr;\n        </a>\n      </div>\n      <p style=\"font-size: 14px; color: #666;\">This is our last email in this series. If you'd like to reconnect later, just reply anytime.</p>\n    `, unsubUrl),\n  };\n}\n"
+      },
+      "id": "nurture-check",
+      "name": "Nurture Check + Build Emails",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        420,
+        700
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.no_emails }}",
+              "operation": "notEqual",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-nurture-emails",
+      "name": "IF: Nurture Emails to Send?",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        640,
+        700
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.RESEND_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.resend_payload) }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "resend-nurture-scheduled",
+      "name": "Resend: Scheduled Nurture",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        860,
+        700
+      ],
+      "typeVersion": 4,
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Webhook: Full Submit": {
+      "main": [
+        [
+          {
+            "node": "01 — Enrich Lead (Apollo/Instantly)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "01 — Enrich Lead (Apollo/Instantly)": {
+      "main": [
+        [
+          {
+            "node": "02 — Gatekeeper 2.5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 — Gatekeeper 2.5": {
+      "main": [
+        [
+          {
+            "node": "IF: Premium Path?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Premium Path?": {
+      "main": [
+        [
+          {
+            "node": "03 — Perplexity Deep Research",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "LITE: Skip Research",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 — Perplexity Deep Research": {
+      "main": [
+        [
+          {
+            "node": "Merge Premium/Lite",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LITE: Skip Research": {
+      "main": [
+        [
+          {
+            "node": "Merge Premium/Lite",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Premium/Lite": {
+      "main": [
+        [
+          {
+            "node": "04 — Claude Synthesis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04 — Claude Synthesis": {
+      "main": [
+        [
+          {
+            "node": "05 — Generate PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "05 — Generate PDF": {
+      "main": [
+        [
+          {
+            "node": "05b — Store PDF + Get URL",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "05b — Store PDF + Get URL": {
+      "main": [
+        [
+          {
+            "node": "06a — Zoho Auth Refresh",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "06a — Zoho Auth Refresh": {
+      "main": [
+        [
+          {
+            "node": "06b — Build Zoho Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "06b — Build Zoho Payload": {
+      "main": [
+        [
+          {
+            "node": "06c — Zoho CRM Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "06c — Zoho CRM Upsert": {
+      "main": [
+        [
+          {
+            "node": "07 — Completion Branching",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "07 — Completion Branching": {
+      "main": [
+        [
+          {
+            "node": "08 — Prospect Email (PDF Delivery)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "09 — Admin God-View Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "11 — Nurture Email 0 (Immediate)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "08 — Prospect Email (PDF Delivery)": {
+      "main": [
+        [
+          {
+            "node": "Resend: Prospect Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "09 — Admin God-View Email": {
+      "main": [
+        [
+          {
+            "node": "Resend: Admin Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resend: Admin Email": {
+      "main": [
+        [
+          {
+            "node": "IF: High Gap Score > 7?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: High Gap Score > 7?": {
+      "main": [
+        [
+          {
+            "node": "10 — Slack High-Gap Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "11 — Nurture Email 0 (Immediate)": {
+      "main": [
+        [
+          {
+            "node": "Resend: Nurture Email 0",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resend: Nurture Email 0": {
+      "main": [
+        [
+          {
+            "node": "12 — Pipeline Complete Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule: Nurture Check (6h)": {
+      "main": [
+        [
+          {
+            "node": "Nurture Check + Build Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nurture Check + Build Emails": {
+      "main": [
+        [
+          {
+            "node": "IF: Nurture Emails to Send?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Nurture Emails to Send?": {
+      "main": [
+        [
+          {
+            "node": "Resend: Scheduled Nurture",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": {
+    "global": {
+      "nurture_leads": {},
+      "stopped_emails": {}
+    }
+  },
+  "tags": [
+    {
+      "name": "leverage-brief"
+    },
+    {
+      "name": "production"
+    }
+  ]
+}
