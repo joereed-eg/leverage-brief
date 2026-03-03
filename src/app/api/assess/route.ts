@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
+import crypto from "crypto";
 import { verifyRequest } from "@/lib/verify-hmac";
 import { sendConfirmationEmail, sendAdminNotification } from "@/lib/email";
 
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_ASSESS_FULL;
+const HMAC_SECRET = process.env.HMAC_SECRET || "fulcrum-dev-secret";
 
 export async function POST(request: Request) {
   try {
@@ -36,6 +38,13 @@ export async function POST(request: Request) {
       );
     }
 
+    // Pre-compute unsubscribe token so n8n nodes don't need crypto
+    const unsubscribeToken = crypto
+      .createHmac("sha256", HMAC_SECRET)
+      .update(email.toLowerCase())
+      .digest("hex")
+      .substring(0, 16);
+
     const n8nResponse = await fetch(N8N_WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -43,6 +52,7 @@ export async function POST(request: Request) {
         ...body,
         client_ip: request.headers.get("x-forwarded-for") || "unknown",
         received_at: new Date().toISOString(),
+        unsubscribe_token: unsubscribeToken,
       }),
     });
 

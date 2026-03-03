@@ -13,8 +13,6 @@
  *   LITE:    Day 0, 5, 7
  */
 
-const crypto = require('crypto');
-
 const lead = $input.first().json;
 const email = lead.email || '';
 const firstName = lead.first_name || (lead.name || '').split(' ')[0] || 'there';
@@ -33,12 +31,8 @@ const FROM_EMAIL = $env.RESEND_FROM_EMAIL || 'joe@fulcrumcollective.io';
 const APP_URL = $env.APP_URL || 'https://leverage.fulcrumcollective.io';
 const HMAC_SECRET = $env.HMAC_SECRET || 'fulcrum-dev-secret';
 
-// Build unsubscribe link
-const unsubToken = crypto
-  .createHmac('sha256', HMAC_SECRET)
-  .update(email.toLowerCase())
-  .digest('hex')
-  .substring(0, 16);
+// Unsubscribe link (token pre-computed by Vercel)
+const unsubToken = lead.unsubscribe_token || '';
 const unsubUrl = `${APP_URL}/api/drip/stop?email=${encodeURIComponent(email)}&token=${unsubToken}`;
 
 // --- PREMIUM TRACK: 5 emails ---

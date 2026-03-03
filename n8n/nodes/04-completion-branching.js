@@ -95,6 +95,7 @@ staticData.nurture_leads[email] = {
   nurture_track: nurtureTrack,
   cadence_days: nurtureConfig.cadence_days,
   nurture_status: 'active',
+  unsubscribe_token: data.unsubscribe_token || '',
 };
 
 // --- Zoho: Update lead with completion data ---

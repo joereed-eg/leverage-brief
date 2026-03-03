@@ -33,6 +33,7 @@ function uuidv4(existingKeys) {
 
 const input = $input.first().json;
 const email = input.email || '';
+const unsubscribeToken = input.unsubscribe_token || '';
 const companyName = input.company_name || '';
 const companyUrl = input.company_url || '';
 const partialStep = input.partial_progress_step || 1;
@@ -92,6 +93,7 @@ if (existingEntry) {
     partial_progress_step: partialStep,
     updated_at: new Date().toISOString(),
     save_count: (staticData.partial_records[resumeId].save_count || 1) + 1,
+    unsubscribe_token: unsubscribeToken || staticData.partial_records[resumeId].unsubscribe_token,
   };
 } else {
   // Create new record
@@ -109,6 +111,7 @@ if (existingEntry) {
     updated_at: new Date().toISOString(),
     drip_emails_sent: 0,
     save_count: 1,
+    unsubscribe_token: unsubscribeToken,
     referrer_url: referrerUrl,
     client_ip: clientIp,
     browser_metadata: browserMetadata,
@@ -153,6 +156,7 @@ return [{
     form_state_stringified: JSON.stringify(formState),
     partial_status: 'in_progress',
     is_new_record: isNewRecord,
+    unsubscribe_token: unsubscribeToken,
 
     // Zoho API payload
     zoho_api_body: zohoApiBody,

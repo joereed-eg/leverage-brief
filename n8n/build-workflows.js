@@ -20,6 +20,7 @@ const MAIN_WORKFLOW_MAP = {
   '02 — Gatekeeper 2.5': path.join(NODES_DIR, '02-gatekeeper.js'),
   '03 — Perplexity Deep Research': path.join(NODES_DIR, '03-perplexity-research.js'),
   '04 — Claude Synthesis': path.join(NODES_DIR, '04-claude-synthesis.js'),
+  '05 — Generate PDF': path.join(NODES_DIR, '05-generate-pdf.js'),
   '05b — Store PDF + Get URL': path.join(NODES_DIR, '05b-store-pdf.js'),
   '06a — Zoho Auth Refresh': path.join(NODES_DIR, '00-zoho-auth.js'),
   '06b — Build Zoho Payload': path.join(NODES_DIR, '11-zoho-upsert.js'),

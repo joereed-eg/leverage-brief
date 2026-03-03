@@ -16,8 +16,6 @@
  * Output: Resend email payload with attachment
  */
 
-const crypto = require('crypto');
-
 const data = $input.first().json;
 const firstName = data.first_name || (data.name || '').split(' ')[0] || 'there';
 const companyName = data.company_name || 'your company';
@@ -70,12 +68,8 @@ const bullet3 = monthlyFocus
 
 const bookingUrl = 'https://cal.com/fulcrumcollective/discovery-call';
 
-// --- Unsubscribe link ---
-const unsubToken = crypto
-  .createHmac('sha256', HMAC_SECRET)
-  .update(email.toLowerCase())
-  .digest('hex')
-  .substring(0, 16);
+// --- Unsubscribe link (token pre-computed by Vercel) ---
+const unsubToken = data.unsubscribe_token || '';
 const unsubUrl = `${APP_URL}/api/drip/stop?email=${encodeURIComponent(email)}&token=${unsubToken}`;
 
 // --- HTML Email ---

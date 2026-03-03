@@ -22,8 +22,6 @@
  * Output: Array of Resend email payloads to send (downstream HTTP Request node)
  */
 
-const crypto = require('crypto');
-
 const staticData = $getWorkflowStaticData('global');
 const partialRecords = staticData.partial_records || {};
 const stoppedEmails = staticData.stopped_emails || {};
@@ -91,12 +89,8 @@ for (const [resumeId, record] of Object.entries(partialRecords)) {
     }
   }
 
-  // --- Build unsubscribe link ---
-  const unsubToken = crypto
-    .createHmac('sha256', HMAC_SECRET)
-    .update(record.email.toLowerCase())
-    .digest('hex')
-    .substring(0, 16);
+  // --- Build unsubscribe link (token stored in record by partial-save) ---
+  const unsubToken = record.unsubscribe_token || '';
   const unsubUrl = `${APP_URL}/api/drip/stop?email=${encodeURIComponent(record.email)}&token=${unsubToken}`;
 
   // --- Build email payload ---

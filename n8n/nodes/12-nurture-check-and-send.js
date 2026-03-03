@@ -19,15 +19,12 @@
  * Output: Array of Resend email payloads to send
  */
 
-const crypto = require('crypto');
-
 const staticData = $getWorkflowStaticData('global');
 const nurtureLeads = staticData.nurture_leads || {};
 const stoppedEmails = staticData.stopped_emails || {};
 const now = Date.now();
 const DAY = 86400000;
 
-const HMAC_SECRET = $env.HMAC_SECRET || 'fulcrum-dev-secret';
 const APP_URL = $env.APP_URL || 'https://leverage.fulcrumcollective.io';
 const FROM_EMAIL = $env.RESEND_FROM_EMAIL || 'joe@fulcrumcollective.io';
 
@@ -64,12 +61,8 @@ for (const [email, lead] of Object.entries(nurtureLeads)) {
   const nextDay = cadence[sent];
   if (daysSinceCompleted < nextDay) continue;
 
-  // --- Build unsubscribe link ---
-  const unsubToken = crypto
-    .createHmac('sha256', HMAC_SECRET)
-    .update(email.toLowerCase())
-    .digest('hex')
-    .substring(0, 16);
+  // --- Build unsubscribe link (token stored in lead by completion-branching) ---
+  const unsubToken = lead.unsubscribe_token || '';
   const unsubUrl = `${APP_URL}/api/drip/stop?email=${encodeURIComponent(email)}&token=${unsubToken}`;
 
   const bookingUrl = 'https://cal.com/fulcrumcollective/discovery-call';
