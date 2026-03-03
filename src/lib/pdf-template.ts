@@ -180,13 +180,8 @@ export function generatePdfHtml(data: PdfData): string {
   /* === PAGE LAYOUT === */
   .page {
     width: 100%;
-    padding: 48px 56px;
-    page-break-after: always;
+    padding: 48px 56px 60px;
     position: relative;
-    min-height: 100vh;
-  }
-  .page:last-child {
-    page-break-after: auto;
   }
 
   /* === HEADER === */
@@ -314,18 +309,23 @@ export function generatePdfHtml(data: PdfData): string {
     margin: 24px 0;
   }
 
-  /* === FOOTER === */
+  /* === FOOTER (repeating on every printed page) === */
+  @page {
+    margin-bottom: 48px;
+  }
   .report-footer {
-    position: absolute;
-    bottom: 32px;
+    position: fixed;
+    bottom: 0;
     left: 56px;
     right: 56px;
     border-top: 1px solid #e0ddd8;
-    padding-top: 12px;
+    padding-top: 8px;
+    padding-bottom: 12px;
     font-size: 8pt;
     color: #aaa;
     display: flex;
     justify-content: space-between;
+    background: #F7F5F2;
   }
 
   /* === CTA SECTION === */

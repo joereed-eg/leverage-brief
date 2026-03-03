@@ -26,9 +26,13 @@ const monthlyFocus = data.monthly_focus || '';
 const gatekeeperPath = data.gatekeeper_path || 'LITE';
 const industry = data.enrichment?.industry || '';
 
-const FROM_EMAIL = $env.RESEND_FROM_EMAIL || 'joe@fulcrumcollective.io';
-const APP_URL = $env.APP_URL || 'https://leverage.fulcrumcollective.io';
-const HMAC_SECRET = $env.HMAC_SECRET || 'fulcrum-dev-secret';
+function env(key, fallback) {
+  try { return $env[key] || fallback; } catch { return fallback; }
+}
+
+const FROM_EMAIL = env('RESEND_FROM_EMAIL', 'joe@fulcrumcollective.io');
+const APP_URL = env('APP_URL', 'https://leverage.fulcrumcollective.io');
+const HMAC_SECRET = env('HMAC_SECRET', 'fulcrum-dev-secret');
 
 // --- Mirror Analysis: Extract Pain Domain from Sunday Dread ---
 const dreadLevel = parseInt(sundayDread.charAt(0)) || 3;

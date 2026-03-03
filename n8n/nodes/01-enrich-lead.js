@@ -26,6 +26,10 @@ let enrichment = {
 // Extract clean domain from company URL
 const domain = companyUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
 
+function env(key, fallback) {
+  try { return $env[key] || fallback; } catch { return fallback; }
+}
+
 // --- Instantly Enrichment (Company Lookup) ---
 try {
   const response = await this.helpers.httpRequest({
@@ -33,7 +37,7 @@ try {
     url: 'https://api.instantly.ai/api/v2/leads/enrich',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${$env.INSTANTLY_API_KEY}`,
+      'Authorization': `Bearer ${env('INSTANTLY_API_KEY', '')}`,
     },
     body: {
       email: email,
@@ -58,7 +62,7 @@ try {
       method: 'GET',
       url: 'https://api.instantly.ai/api/v1/lead/data',
       qs: {
-        api_key: $env.INSTANTLY_API_KEY,
+        api_key: env('INSTANTLY_API_KEY', ''),
         email: email,
       },
       timeout: 15000,

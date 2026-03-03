@@ -32,7 +32,11 @@ if (!synthesizedBrief) {
   }];
 }
 
-const appBaseUrl = $env.APP_URL || 'https://leverage.fulcrumcollective.io';
+function env(key, fallback) {
+  try { return $env[key] || fallback; } catch { return fallback; }
+}
+
+const appBaseUrl = env('APP_URL', 'https://leverage.fulcrumcollective.io');
 
 try {
   // Call the Vercel PDF generation endpoint

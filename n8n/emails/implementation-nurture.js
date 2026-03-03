@@ -27,9 +27,13 @@ const monthlyFocus = lead.monthly_focus || '';
 const emailIndex = lead._nurture_email_index || 0;
 
 const bookingUrl = 'https://cal.com/fulcrumcollective/discovery-call';
-const FROM_EMAIL = $env.RESEND_FROM_EMAIL || 'joe@fulcrumcollective.io';
-const APP_URL = $env.APP_URL || 'https://leverage.fulcrumcollective.io';
-const HMAC_SECRET = $env.HMAC_SECRET || 'fulcrum-dev-secret';
+function env(key, fallback) {
+  try { return $env[key] || fallback; } catch { return fallback; }
+}
+
+const FROM_EMAIL = env('RESEND_FROM_EMAIL', 'joe@fulcrumcollective.io');
+const APP_URL = env('APP_URL', 'https://leverage.fulcrumcollective.io');
+const HMAC_SECRET = env('HMAC_SECRET', 'fulcrum-dev-secret');
 
 // Unsubscribe link (token pre-computed by Vercel)
 const unsubToken = lead.unsubscribe_token || '';

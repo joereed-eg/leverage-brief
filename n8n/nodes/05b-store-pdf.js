@@ -27,7 +27,11 @@ if (!pdfBase64) {
 }
 
 try {
-  const appBaseUrl = $env.APP_BASE_URL || 'https://leverage-brief.vercel.app';
+  function env(key, fallback) {
+    try { return $env[key] || fallback; } catch { return fallback; }
+  }
+
+  const appBaseUrl = env('APP_BASE_URL', 'https://leverage-brief.vercel.app');
 
   const response = await this.helpers.httpRequest({
     method: 'POST',

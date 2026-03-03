@@ -28,9 +28,13 @@ const stoppedEmails = staticData.stopped_emails || {};
 const now = Date.now();
 const HOUR = 3600000;
 const zohoToken = $input.first().json.zoho_access_token || null;
-const HMAC_SECRET = $env.HMAC_SECRET || 'fulcrum-dev-secret';
-const APP_URL = $env.APP_URL || 'https://leverage.fulcrumcollective.io';
-const FROM_EMAIL = $env.RESEND_FROM_EMAIL || 'joe@fulcrumcollective.io';
+function env(key, fallback) {
+  try { return $env[key] || fallback; } catch { return fallback; }
+}
+
+const HMAC_SECRET = env('HMAC_SECRET', 'fulcrum-dev-secret');
+const APP_URL = env('APP_URL', 'https://leverage.fulcrumcollective.io');
+const FROM_EMAIL = env('RESEND_FROM_EMAIL', 'joe@fulcrumcollective.io');
 
 const emailsToSend = [];
 

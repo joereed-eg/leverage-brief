@@ -9,6 +9,10 @@
  * Output: { synthesized_brief, model_used, tokens_used }
  */
 
+function env(key, fallback) {
+  try { return $env[key] || fallback; } catch { return fallback; }
+}
+
 // --- Collect all inputs ---
 const data = $input.first().json;
 
@@ -274,7 +278,7 @@ try {
     method: 'POST',
     url: 'https://api.anthropic.com/v1/messages',
     headers: {
-      'x-api-key': $env.ANTHROPIC_API_KEY,
+      'x-api-key': env('ANTHROPIC_API_KEY', ''),
       'anthropic-version': '2023-06-01',
       'Content-Type': 'application/json',
     },

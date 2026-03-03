@@ -118,7 +118,11 @@ if (existingEntry) {
   };
 }
 
-const APP_URL = $env.APP_URL || 'https://leverage.fulcrumcollective.io';
+function env(key, fallback) {
+  try { return $env[key] || fallback; } catch { return fallback; }
+}
+
+const APP_URL = env('APP_URL', 'https://leverage.fulcrumcollective.io');
 const resumeUrl = `${APP_URL}?resume_id=${resumeId}`;
 
 // --- Zoho CRM API body (for HTTP Request node) ---

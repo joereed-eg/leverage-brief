@@ -27,7 +27,11 @@ const gatekeeperPath = data.gatekeeper_path || 'LITE';
 const strategicPath = data.strategic_path || 'CLARIFY';
 const engagementReadiness = data.engagement_readiness || '';
 
-const FROM_EMAIL = $env.RESEND_FROM_EMAIL || 'joe@fulcrumcollective.io';
+function env(key, fallback) {
+  try { return $env[key] || fallback; } catch { return fallback; }
+}
+
+const FROM_EMAIL = env('RESEND_FROM_EMAIL', 'joe@fulcrumcollective.io');
 const ADMIN_EMAIL = 'joe@fulcrumcollective.io';
 
 const revenueFormatted = annualRevenue

@@ -25,8 +25,12 @@ const stoppedEmails = staticData.stopped_emails || {};
 const now = Date.now();
 const DAY = 86400000;
 
-const APP_URL = $env.APP_URL || 'https://leverage.fulcrumcollective.io';
-const FROM_EMAIL = $env.RESEND_FROM_EMAIL || 'joe@fulcrumcollective.io';
+function env(key, fallback) {
+  try { return $env[key] || fallback; } catch { return fallback; }
+}
+
+const APP_URL = env('APP_URL', 'https://leverage.fulcrumcollective.io');
+const FROM_EMAIL = env('RESEND_FROM_EMAIL', 'joe@fulcrumcollective.io');
 
 const emailsToSend = [];
 

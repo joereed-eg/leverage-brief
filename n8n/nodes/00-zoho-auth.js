@@ -31,6 +31,10 @@ if (cachedToken && now < tokenExpiry) {
 }
 
 // --- Refresh token ---
+function env(key, fallback) {
+  try { return $env[key] || fallback; } catch { return fallback; }
+}
+
 try {
   const response = await this.helpers.httpRequest({
     method: 'POST',
@@ -38,9 +42,9 @@ try {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       grant_type: 'refresh_token',
-      client_id: $env.ZOHO_CLIENT_ID,
-      client_secret: $env.ZOHO_CLIENT_SECRET,
-      refresh_token: $env.ZOHO_REFRESH_TOKEN,
+      client_id: env('ZOHO_CLIENT_ID', ''),
+      client_secret: env('ZOHO_CLIENT_SECRET', ''),
+      refresh_token: env('ZOHO_REFRESH_TOKEN', ''),
     }).toString(),
     timeout: 10000,
   });

@@ -12,9 +12,13 @@ const resumeUrl = data.resume_url || '';
 const step = data.partial_progress_step || 1;
 const email = data.email || '';
 
-const FROM_EMAIL = $env.RESEND_FROM_EMAIL || 'joe@fulcrumcollective.io';
-const APP_URL = $env.APP_URL || 'https://leverage.fulcrumcollective.io';
-const HMAC_SECRET = $env.HMAC_SECRET || 'fulcrum-dev-secret';
+function env(key, fallback) {
+  try { return $env[key] || fallback; } catch { return fallback; }
+}
+
+const FROM_EMAIL = env('RESEND_FROM_EMAIL', 'joe@fulcrumcollective.io');
+const APP_URL = env('APP_URL', 'https://leverage.fulcrumcollective.io');
+const HMAC_SECRET = env('HMAC_SECRET', 'fulcrum-dev-secret');
 
 // --- Unsubscribe link (token pre-computed by Vercel) ---
 const unsubToken = data.unsubscribe_token || '';

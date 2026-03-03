@@ -49,6 +49,10 @@ const queries = [
   },
 ];
 
+function env(key, fallback) {
+  try { return $env[key] || fallback; } catch { return fallback; }
+}
+
 let researchPackage = {};
 let researchFailed = false;
 let researchModel = 'perplexity_sonar';
@@ -64,7 +68,7 @@ try {
         method: 'POST',
         url: 'https://api.perplexity.ai/chat/completions',
         headers: {
-          'Authorization': `Bearer ${$env.PERPLEXITY_API_KEY}`,
+          'Authorization': `Bearer ${env('PERPLEXITY_API_KEY', '')}`,
           'Content-Type': 'application/json',
         },
         body: {
