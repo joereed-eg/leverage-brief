@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
-import puppeteer from "puppeteer";
+import puppeteer from "puppeteer-core";
+import chromium from "@sparticuz/chromium";
 import { generatePdfHtml } from "@/lib/pdf-template";
+
+export const maxDuration = 60;
 
 export async function POST(request: Request) {
   let browser;
@@ -31,10 +34,12 @@ export async function POST(request: Request) {
       synthesized_brief,
     });
 
-    // Launch Puppeteer and render PDF
+    // Launch Puppeteer with @sparticuz/chromium for serverless
     browser = await puppeteer.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
     });
 
     const page = await browser.newPage();

@@ -51,7 +51,18 @@ function bakeWorkflow(templatePath, codeMap, outputPath) {
       const codePath = codeMap[node.name];
       if (fs.existsSync(codePath)) {
         const code = fs.readFileSync(codePath, 'utf8');
-        node.parameters.functionCode = code;
+
+        // Convert Function nodes → Code nodes (compatible with modern n8n)
+        if (node.type === 'n8n-nodes-base.function') {
+          node.type = 'n8n-nodes-base.code';
+          node.typeVersion = 2;
+          delete node.parameters.functionCode;
+          node.parameters.jsCode = code;
+          node.parameters.mode = 'runOnceForAllItems';
+        } else {
+          node.parameters.functionCode = code;
+        }
+
         bakedCount++;
         console.log(`  ✓ ${node.name} ← ${path.basename(codePath)}`);
       } else {
